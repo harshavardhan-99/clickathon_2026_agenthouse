@@ -1,0 +1,87 @@
+"""Load conversation_agent settings from repo-root `.env`."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(_ROOT / ".env")
+
+
+def _env(key: str, default: str = "") -> str:
+    return os.getenv(key, default).strip()
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = os.getenv(key)
+    if raw is None or raw.strip() == "":
+        return default
+    return int(raw.strip())
+
+
+# ClickHouse
+CLICKHOUSE_HOST = _env("CLICKHOUSE_HOST")
+CLICKHOUSE_PORT = _env_int("CLICKHOUSE_PORT", 8443)
+CLICKHOUSE_USER = _env("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD = _env("CLICKHOUSE_PASSWORD")
+CLICKHOUSE_SECURE = _env_bool("CLICKHOUSE_SECURE", True)
+CLICKHOUSE_VERIFY = _env_bool("CLICKHOUSE_VERIFY", True)
+CLICKHOUSE_DATABASE = _env("CLICKHOUSE_DATABASE", "atlys")
+CLICKHOUSE_CONNECT_TIMEOUT = _env_int("CLICKHOUSE_CONNECT_TIMEOUT", 30)
+CLICKHOUSE_SEND_RECEIVE_TIMEOUT = _env_int("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", 60)
+
+# MCP
+CLICKHOUSE_MCP_COMMAND = _env(
+    "CLICKHOUSE_MCP_COMMAND", "python -m mcp_clickhouse.main"
+)
+CLICKHOUSE_MCP_TIMEOUT_SECONDS = _env_int("CLICKHOUSE_MCP_TIMEOUT_SECONDS", 90)
+
+# Model — provider: claude | gemini | openai
+MODEL_PROVIDER = _env("MODEL_PROVIDER", "claude")
+MODEL_ID = _env("MODEL_ID", "claude-sonnet-4-6")
+ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
+GOOGLE_API_KEY = _env("GOOGLE_API_KEY")
+OPENAI_API_KEY = _env("OPENAI_API_KEY")
+
+# Langfuse
+LANGFUSE_ENABLED = _env_bool("LANGFUSE_ENABLED", True)
+LANGFUSE_SECRET_KEY = _env("LANGFUSE_SECRET_KEY")
+LANGFUSE_PUBLIC_KEY = _env("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_BASE_URL = _env("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+
+# Optional Postgres
+DATABASE_URL = _env("DATABASE_URL")
+SESSION_DATABASE_URL = _env("SESSION_DATABASE_URL")
+
+# AgentOS
+AGENTOS_ID = _env("AGENTOS_ID", "clickathon-visualization")
+AGENTOS_DESCRIPTION = _env(
+    "AGENTOS_DESCRIPTION",
+    "NL → ClickHouse MCP → AnalyticsResponse blocks",
+)
+AGENTOS_HOST = _env("AGENTOS_HOST", "0.0.0.0")
+AGENTOS_PORT = _env_int("AGENTOS_PORT", 7777)
+AGENTOS_DB_PATH = _env("AGENTOS_DB_PATH", "tmp/visualization_agent_os.db")
+AGENTOS_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:7777",
+    "https://os.agno.com",
+]
+AGENT_ID = _env("AGENT_ID", "visualization-agent")
+AGENT_NAME = _env("AGENT_NAME", "Visualization Agent")
+AGENT_HISTORY_RUNS = _env_int("AGENT_HISTORY_RUNS", 3)
+
+DEFAULT_PROMPT = (
+    "Show purchase conversion by device_type for the last 30 days "
+    "(uniq users who purchased / uniq users who started an application)."
+)
