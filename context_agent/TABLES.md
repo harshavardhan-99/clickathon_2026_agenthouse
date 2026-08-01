@@ -49,7 +49,7 @@ Pipeline: **profile → ClickHouse DDL/load → Postgres meta**.
 |------|----------|
 | **In** | `SPECS_ROOT/{feature_id}/spec.md` + `events.ndjson` |
 | **Profile** | Infer journey order from spec; flatten/infer CH column types per event |
-| **ClickHouse** | One table per event (`ch_table` = `event_name`); SQLGlot-validated DDL; load rows |
+| **ClickHouse** | Single Activity Schema (`activity_events`); SQLGlot-validated DDL; load rows |
 | **Postgres** | Upsert `meta_features`; replace `meta_events` for that feature |
 | **API** | `POST /v1/instrument`, `GET /v1/registry/{feature_id}`, `GET /health` |
 | **Init** | `uv run python -m instrumentation_agent.init_db` |
@@ -66,11 +66,12 @@ One row per feature (latest run outcome).
 
 ### 2. `meta_events`
 
-Event → CH table + journey order. Field shapes in `columns` (`{column_name: ch_type}`).
+Event → shared CH activity table + journey order. Payload field shapes in
+`columns` (`{json_key: ch_type}` for `event_info`, plus envelope awareness).
 
 | event_name | feature_id | journey_order | ch_table | row_count | run_id | columns | registered_at |
 |------------|------------|---------------|----------|-----------|--------|---------|---------------|
-| `otp_entered` | `01_express_checkout` | `4` | `otp_entered` | `910` | uuid | `{"otp_success":"UInt8",…}` | `2026-06-08…` |
+| `otp_entered` | `01_express_checkout` | `4` | `activity_events` | `910` | uuid | `{"otp_success":"UInt8",…}` | `2026-06-08…` |
 
 ---
 
@@ -124,9 +125,12 @@ Ordered by priority:
 
 ### 1. Seed `v0`
 
-Call `publish_context_version` (library or tool) with `source=seed` and base entities /
-metrics / core `funnel_step`s / issues / contradictions so Conversation is never empty.
-No separate seed tool — reuse publish.
+```bash
+uv run python context_agent/scripts/seed_v0.py
+```
+
+Calls `publish_context_version` with `source=seed` and base entities / metrics /
+core `funnel_step`s so Conversation is never empty. Idempotent unless `--force`.
 
 ### 2. Reconcile after Instrumentation
 
@@ -139,8 +143,9 @@ After `POST /v1/instrument` (or on demand):
 
 ### 3. Wire Conversation
 
-Conversation imports `get_context_catalog_tools()` and uses deterministic CH query builders
-against `meta_events.ch_table` + `columns`, citing `context_version`.
+Conversation imports `get_context_catalog_tools()` and uses deterministic CH query
+builders against the Single Activity Schema (`activity_events` + `event_name` +
+`event_info`), citing `context_version`.
 
 ### Explicit non-goals for Context
 
@@ -156,8 +161,8 @@ against `meta_events.ch_table` + `columns`, citing `context_version`.
 
 1. `get_latest_context_items` → current version + meaning  
 2. Filter `kind` as needed (`metric`, `issue`, `funnel_step`, …)  
-3. `get_feature_meta(feature_id)` → journey + `ch_table` + `columns`  
-4. Run aggregates in **ClickHouse**; cite `context_version` in the insight  
+3. `get_feature_meta(feature_id)` → journey + shared `ch_table` + `event_info` columns  
+4. Run aggregates in **ClickHouse** (`activity_events`); cite `context_version` in the insight  
 
 ---
 

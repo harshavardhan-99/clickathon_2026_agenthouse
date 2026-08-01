@@ -1,48 +1,27 @@
-# Schema context
+# Schema context (legacy reference)
 
-Database: `atlys` (ClickHouse Cloud).
+Conversation **discover_schema** uses context catalog tools only.
+This file is a static reminder of the physical SAS — not injected into the agent.
 
-## Funnel table — use this
+## Table
 
-**Always query `atlys.funnel_events`.** Do not use per-event tables or a bare
-`events` table for funnel analytics.
-
-| Table | Kind | Role |
-|-------|------|------|
-| `funnel_events` | funnel | One row per funnel event; filter / condition on the event name column |
-
-Qualify as `atlys.funnel_events`.
-
-### Event names in `funnel_events` (core funnel)
-
-- `destination_card_clicked`
-- `application_started`
-- `document_uploaded`
-- `purchase_completed`
-
-Funnel order:
-
-```
-destination_card_clicked → application_started → document_uploaded → purchase_completed
-```
-
-### Shared / analysis columns
+`atlys.activity_events`
 
 | Column | Notes |
 |--------|--------|
-| `timestamp` | DateTime — use for `windowFunnel` and time filters |
-| `event` | Event name (string) — use in `windowFunnel` conditions |
-| `user_id` | Whole-journey partition key |
+| `id` | Event id |
+| `timestamp` | DateTime — `windowFunnel` / time filters |
+| `event_name` | Event name — funnel conditions |
+| `user_id` | Journey partition |
 | `application_id` | From `application_started` onward |
 | `device_type` | Segment |
 | `os` | Segment |
 | `geoip_country_code` | Segment |
 | `destination` | Segment |
-| `funnel_type` | Segment |
-| `step` | Optional UInt funnel position when present |
+| `event_info` | JSON payload |
 
-## Primary keys for analysis
+## Core funnel
 
-- **User journey:** `user_id`
-- **Application journey:** `application_id`
-- **Event time:** `timestamp`
+```
+destination_card_clicked → application_started → document_uploaded → purchase_completed
+```

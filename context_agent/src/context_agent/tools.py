@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from agno.tools import Toolkit
 
+import context_agent.catalog as _catalog
 from context_agent.catalog import get_feature_meta, get_latest_context_items
 from context_agent.publish import publish_context_version
+
+
+def _row_to_dict_compatible(row: Any) -> dict[str, Any]:
+    """RowMapping (.mappings()) has no usable ._mapping attr — use dict(row)."""
+    d = dict(row)
+    for k, v in list(d.items()):
+        if hasattr(v, "isoformat"):
+            d[k] = v.isoformat()
+    return d
+
+
+# catalog._row_to_dict breaks on SQLAlchemy RowMapping; patch without editing catalog.py
+_catalog._row_to_dict = _row_to_dict_compatible
 
 
 class ContextCatalogTools(Toolkit):
@@ -43,7 +57,9 @@ class ContextCatalogTools(Toolkit):
         """Load Instrumentation meta for one feature (meta_features + meta_events).
 
         Use for feature-specific PM questions (Express, Group, Forex, …).
-        Events are ordered by journey_order; column shapes are in events.columns.
+        Events are ordered by journey_order. Under Single Activity Schema,
+        ch_table is typically the shared activity table; event-specific fields
+        are described in events.columns / event_info keys.
 
         Args:
             feature_id: e.g. \"01_express_checkout\"

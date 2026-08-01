@@ -37,8 +37,18 @@ CLICKHOUSE_PASSWORD = _env("CLICKHOUSE_PASSWORD")
 CLICKHOUSE_SECURE = _env_bool("CLICKHOUSE_SECURE", True)
 CLICKHOUSE_VERIFY = _env_bool("CLICKHOUSE_VERIFY", True)
 CLICKHOUSE_DATABASE = _env("CLICKHOUSE_DATABASE", "atlys")
+# Single Activity Schema table (envelope + event_info JSON)
+CLICKHOUSE_ACTIVITY_TABLE = _env("CLICKHOUSE_ACTIVITY_TABLE", "activity_events")
 CLICKHOUSE_CONNECT_TIMEOUT = _env_int("CLICKHOUSE_CONNECT_TIMEOUT", 30)
 CLICKHOUSE_SEND_RECEIVE_TIMEOUT = _env_int("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", 60)
+
+
+def activity_table_fqn() -> str:
+    """Fully-qualified activity table, e.g. atlys.activity_events."""
+    name = CLICKHOUSE_ACTIVITY_TABLE or "activity_events"
+    if "." in name:
+        return name
+    return f"{CLICKHOUSE_DATABASE}.{name}"
 
 # MCP
 CLICKHOUSE_MCP_COMMAND = _env(
@@ -89,10 +99,6 @@ WORKFLOW_ID = _env("WORKFLOW_ID", "visualization-agent")
 
 # Workflow artifact paths (relative to conversation_agent/ unless absolute)
 _CA_DIR = Path(__file__).resolve().parent
-SCHEMA_CONTEXT_PATH = _env(
-    "SCHEMA_CONTEXT_PATH",
-    str(_CA_DIR / "context" / "schema_context.md"),
-)
 GENERATE_QUERY_SKILL_PATH = _env(
     "GENERATE_QUERY_SKILL_PATH",
     str(_CA_DIR / "skills" / "generate_query.md"),

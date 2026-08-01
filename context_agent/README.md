@@ -14,11 +14,11 @@ Context publishes context_versions / context_items → Postgres
         │
         ▼
   get_latest_context_items()   → meaning (context_*)
-  get_feature_meta(feature_id) → journey + events (meta_*)
+  get_feature_meta(feature_id) → journey + shared activity table + event_info columns
   publish_context_version(...) → new context version (copy-forward + deltas)
         │
         ▼
-  Imported by Conversation (or any Agno agent) as tools
+  Imported by Conversation (SAS builders on activity_events)
 ```
 
 ## The 3 tools
@@ -82,10 +82,15 @@ uv sync
 uv run python -m instrumentation_agent.init_db
 # Context tables (this package):
 uv run python context_agent/scripts/init_schema.py
+# Seed living context (entities, metrics, core funnel_steps):
+uv run python context_agent/scripts/seed_v0.py
 
 # Optional health check service (no agent):
 PYTHONPATH=context_agent/src uv run uvicorn context_agent.app:app --reload --port 8001
 ```
+
+Without `seed_v0`, `get_latest_context_items` returns empty and Conversation
+`discover_schema` cannot invent schema (empty SchemaContext + notes).
 
 ## Related
 

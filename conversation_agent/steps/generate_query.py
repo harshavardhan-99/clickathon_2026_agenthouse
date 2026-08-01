@@ -1,4 +1,4 @@
-"""Step: generate_query — VizSpec → QuerySpec via funnel / windowFunnel skill."""
+"""Step: generate_query — VizSpec → QuerySpec via activity-schema skill."""
 
 from __future__ import annotations
 
@@ -18,22 +18,27 @@ from conversation_agent.shared import (
 
 STEP_NAME = "generate_query"
 
+_FQN = config.activity_table_fqn()
+_TABLE = config.CLICKHOUSE_ACTIVITY_TABLE or "activity_events"
+
 BASE_INSTRUCTIONS = [
     "Your input is a VizSpec (Pydantic JSON from plan_visualization).",
-    "Follow the ClickHouse Funnel Analytics skill below in full before writing SQL.",
-    "CRITICAL: Always query atlys.funnel_events. Do not use FROM events, and do not "
-    "UNION per-event tables. Filter / windowFunnel conditions use the `event` column; "
-    "time column is `timestamp`.",
-    "For conversion funnels use windowFunnel() on atlys.funnel_events (correct partition "
-    "key, window unit comment, ordered conditions, cumulative countIf for step reach).",
+    "Follow the ClickHouse Activity Schema skill below in full before writing SQL.",
+    f"CRITICAL: Always query {_FQN}. Do not use FROM events, funnel_events, or "
+    "UNION per-event tables. Filter / windowFunnel conditions use `event_name`; "
+    "time column is `timestamp`. Envelope segments: device_type, os, "
+    "geoip_country_code, destination. Payload fields live in `event_info` "
+    "(use JSONExtract* when needed).",
+    f"For conversion funnels use windowFunnel() on {_FQN} (correct partition "
+    "key, window unit comment, ordered event_name conditions, cumulative countIf).",
     "Emit exactly one SELECT (or WITH … SELECT) in QuerySpec.sql — no tools, do not execute.",
     "Prefer SQL that returns step / entities / conversion_from_start "
     "(plus segment_value when VizSpec asks for a segment cut).",
-    "Also set QuerySpec.funnel, window_seconds, step_names, filters, tables_used "
-    "(['funnel_events']), and caveats for the §5 funnel JSON contract.",
-    "Do not invent event names absent from the VizSpec / skill / schema context.",
-    "Companion metrics (latency, AOV, K-factor, churn counts) are NOT inside windowFunnel — "
-    "note them in caveats; this step still returns one funnel query only.",
+    f"Also set QuerySpec.funnel, window_seconds, step_names, filters, tables_used "
+    f"(['{_TABLE}']), and caveats for the skill JSON contract.",
+    "Do not invent event names or event_info keys absent from VizSpec / skill / catalog.",
+    "Companion metrics (latency, AOV, K-factor) may need JSONExtract on event_info — "
+    "note in caveats; prefer one primary query.",
 ]
 
 
@@ -65,6 +70,6 @@ def build_agent(*, db: Any = None) -> Agent:
 def build_step(*, db: Any = None) -> Step:
     return Step(
         name=STEP_NAME,
-        description="Generate windowFunnel ClickHouse SQL from VizSpec",
+        description="Generate activity_events ClickHouse SQL from VizSpec",
         agent=build_agent(db=db),
     )

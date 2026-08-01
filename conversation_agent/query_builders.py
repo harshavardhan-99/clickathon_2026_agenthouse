@@ -24,9 +24,13 @@ ALLOWED_SEGMENTS = frozenset(
         "os",
         "geoip_country_code",
         "destination",
-        "event",
+        "event_name",
+        "application_id",
     }
 )
+
+# SAS event discriminator column (not the AnalyticsPlan.event_names list field)
+EVENT_COL = "event_name"
 
 CORE_FUNNEL_STEPS = [
     "destination_card_clicked",
@@ -66,7 +70,7 @@ class BuildResult(BaseModel):
 
 
 def _qualified_table(table: str | None = None) -> str:
-    raw = (table or "").strip() or f"{config.CLICKHOUSE_DATABASE}.funnel_events"
+    raw = (table or "").strip() or config.activity_table_fqn()
     if "." not in raw:
         raw = f"{config.CLICKHOUSE_DATABASE}.{raw}"
     # allowlist simple identifiers
@@ -148,7 +152,9 @@ def build_funnel_sql(plan: AnalyticsPlan) -> BuildResult:
     if segment:
         segment = _quote_ident(segment)
 
-    conditions = ",\n            ".join(f"event = {_quote_str(s)}" for s in steps)
+    conditions = ",\n            ".join(
+        f"{EVENT_COL} = {_quote_str(s)}" for s in steps
+    )
     where = _where_clause(plan.time_window, plan.filters, table=table)
     window = int(plan.window_seconds)
 
@@ -192,7 +198,10 @@ FROM funnel_levels
     return BuildResult(
         sql=sql,
         tables_used=[table.split(".")[-1]],
-        caveats="windowFunnel on funnel_events; companion metrics not included",
+        caveats=(
+            f"windowFunnel on {table.split('.')[-1]} ({EVENT_COL}); "
+            "payload fields live in event_info (JSONExtract when needed)"
+        ),
         step_names=steps,
         window_seconds=window,
     )
@@ -204,24 +213,24 @@ def build_timeseries_sql(plan: AnalyticsPlan) -> BuildResult:
     where = _where_clause(plan.time_window, plan.filters, table=table)
     if events:
         ev_list = ", ".join(_quote_str(e) for e in events)
-        where = f"{where} AND event IN ({ev_list})"
+        where = f"{where} AND {EVENT_COL} IN ({ev_list})"
 
     sql = f"""
 SELECT
     toStartOfDay(timestamp) AS day,
-    event,
+    {EVENT_COL},
     count() AS events,
     uniqExact(user_id) AS users
 FROM {table}
 WHERE {where}
-GROUP BY day, event
-ORDER BY day, event
+GROUP BY day, {EVENT_COL}
+ORDER BY day, {EVENT_COL}
 """.strip()
 
     return BuildResult(
         sql=sql,
         tables_used=[table.split(".")[-1]],
-        caveats="Daily grain; uniqExact(user_id) per event",
+        caveats="Daily grain; uniqExact(user_id) per event_name",
         step_names=events,
     )
 
@@ -235,7 +244,7 @@ def build_breakdown_sql(plan: AnalyticsPlan) -> BuildResult:
     where = _where_clause(plan.time_window, plan.filters, table=table)
     if events:
         ev_list = ", ".join(_quote_str(e) for e in events)
-        where = f"{where} AND event IN ({ev_list})"
+        where = f"{where} AND {EVENT_COL} IN ({ev_list})"
 
     dim_select = ", ".join(dims)
     sql = f"""
@@ -268,24 +277,24 @@ def build_metric_sql(plan: AnalyticsPlan) -> BuildResult:
     if len(events) >= 2:
         num_e, den_e = events[0], events[1]
         metric_select = (
-            f"uniqExactIf(user_id, event = {_quote_str(num_e)}) AS numerator_users,\n"
-            f"    uniqExactIf(user_id, event = {_quote_str(den_e)}) AS denominator_users,\n"
-            f"    uniqExactIf(user_id, event = {_quote_str(num_e)}) "
-            f"/ nullIf(uniqExactIf(user_id, event = {_quote_str(den_e)}), 0) AS rate"
+            f"uniqExactIf(user_id, {EVENT_COL} = {_quote_str(num_e)}) AS numerator_users,\n"
+            f"    uniqExactIf(user_id, {EVENT_COL} = {_quote_str(den_e)}) AS denominator_users,\n"
+            f"    uniqExactIf(user_id, {EVENT_COL} = {_quote_str(num_e)}) "
+            f"/ nullIf(uniqExactIf(user_id, {EVENT_COL} = {_quote_str(den_e)}), 0) AS rate"
         )
         where = (
-            f"{where} AND event IN ({_quote_str(num_e)}, {_quote_str(den_e)})"
+            f"{where} AND {EVENT_COL} IN ({_quote_str(num_e)}, {_quote_str(den_e)})"
         )
         caveats = f"rate = uniq({num_e}) / uniq({den_e})"
         order_col = "rate"
     elif len(events) == 1:
         e = events[0]
         metric_select = (
-            f"countIf(event = {_quote_str(e)}) AS events,\n"
-            f"    uniqExactIf(user_id, event = {_quote_str(e)}) AS users"
+            f"countIf({EVENT_COL} = {_quote_str(e)}) AS events,\n"
+            f"    uniqExactIf(user_id, {EVENT_COL} = {_quote_str(e)}) AS users"
         )
-        where = f"{where} AND event = {_quote_str(e)}"
-        caveats = f"counts for event {e}"
+        where = f"{where} AND {EVENT_COL} = {_quote_str(e)}"
+        caveats = f"counts for event_name {e}"
         order_col = "users"
     else:
         metric_select = "count() AS events,\n    uniqExact(user_id) AS users"
@@ -331,7 +340,7 @@ def build_comparison_sql(plan: AnalyticsPlan) -> BuildResult:
     event_pred = ""
     if events:
         ev_list = ", ".join(_quote_str(e) for e in events)
-        event_pred = f" AND event IN ({ev_list})"
+        event_pred = f" AND {EVENT_COL} IN ({ev_list})"
 
     sql = f"""
 SELECT
@@ -422,5 +431,5 @@ def plan_from_viz_spec(viz: Any) -> AnalyticsPlan:
         time_window=data.get("time_window") or "last_30_days",
         filters=filters,
         title=data.get("title"),
-        table=f"{config.CLICKHOUSE_DATABASE}.funnel_events",
+        table=config.activity_table_fqn(),
     )

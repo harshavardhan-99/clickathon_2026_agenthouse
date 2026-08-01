@@ -76,7 +76,9 @@ User question
       │
       ▼
 ┌─────────────────┐
-│ discover_schema │  schema_context.md → SchemaContext   (LLM)
+│ discover_schema │  context catalog tools + SAS shape
+│                 │  (activity_events envelope + event_info)
+│                 │  → SchemaContext   (LLM)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
@@ -95,9 +97,9 @@ User question
 
 | `kind` | SQL pattern |
 |--------|-------------|
-| `funnel` | `windowFunnel` on `atlys.funnel_events` |
-| `timeseries` | daily `count` / `uniqExact` by event |
-| `breakdown` / `top_n` | `GROUP BY` segment |
+| `funnel` | `windowFunnel` on `atlys.activity_events` (`event_name`) |
+| `timeseries` | daily `count` / `uniqExact` by `event_name` |
+| `breakdown` / `top_n` | `GROUP BY` envelope segment |
 | `metric` | counts or rate (`event_names` = numerator,denominator) |
 | `comparison` | current vs previous half-window |
 
@@ -126,12 +128,15 @@ Use the **`clickathon`** pyenv venv (not system `pip`).
 
 ```bash
 pyenv activate clickathon   # or: PYENV_VERSION=clickathon
+# Build SAS fact table from existing per-event CH tables (once):
+python conversation_agent/scripts/build_activity_events.py --drop
 python -m conversation_agent.visualization_agent "conversion by device last 30 days"
 python -m conversation_agent.visualization_agent --os
 ```
 
+`--sample N` loads at most N rows per source table for a quick smoke test.
+
 ```bash
-pyenv activate clickathon
 uvicorn app.main:app --reload --port 8000
 ```
 

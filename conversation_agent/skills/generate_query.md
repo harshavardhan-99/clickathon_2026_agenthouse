@@ -1,123 +1,113 @@
 ---
-name: clickhouse-funnel-analytics
+name: clickhouse-activity-analytics
 description: >-
-  Build product-analytics funnels from atlys.funnel_events using windowFunnel(),
-  and shape the result for the visualization agent. Use whenever the user asks
-  for conversion funnels, drop-off analysis, step-by-step completion rates, or
-  "how many users went from X to Y". Also use for segment cuts
-  (device/os/geo/destination) of a funnel.
+  Build product-analytics queries against the Single Activity Schema table
+  (atlys.activity_events) using event_name + envelope columns and event_info JSON.
+  Use for funnels (windowFunnel), conversion, drop-off, segment cuts, and
+  payload-deep metrics via JSONExtract.
 ---
 
-# ClickHouse Funnel Analytics
+# ClickHouse Activity Schema Analytics
 
-Generates funnel data with `windowFunnel()` against **`atlys.funnel_events`**, then
-hands a normalized result to the visualization agent. **Read this whole file
-before writing a query.**
-
-**Input to this step:** `VizSpec` JSON. Map VizSpec → one `QuerySpec`.
+**Input:** `VizSpec` JSON. Map VizSpec → one `QuerySpec`.
 
 ## 1. Table — CRITICAL
 
-**Always use `atlys.funnel_events`.** Do **not** query `events`, and do **not**
-UNION per-event tables for funnels.
+**Always use `atlys.activity_events`** (or `CLICKHOUSE_ACTIVITY_TABLE`).  
+Do **not** query legacy per-event tables or `funnel_events`.
 
-One row per funnel event. Key columns:
+### Columns (envelope)
 
-- `timestamp` — DateTime (seconds) for `windowFunnel` and time filters
-- `event` — event name string (e.g. `application_started`, `purchase_completed`)
-- `user_id`, `application_id`, `device_type`, `os`, `geoip_country_code`, `destination`, …
+| Column | Role |
+|--------|------|
+| `id` | Event id |
+| `timestamp` | DateTime — `windowFunnel` + time filters |
+| `event_name` | Event discriminator (use in filters / funnel conditions) |
+| `user_id` | Journey partition key |
+| `application_id` | Application grain (often empty before `application_started`) |
+| `device_type` | Segment |
+| `os` | Segment |
+| `geoip_country_code` | Segment |
+| `destination` | Segment |
+| `event_info` | JSON string — event-specific payload |
 
-Partition key is usually `user_id` (use `group_id` / `share_id` when those columns
-exist and VizSpec calls for group/share funnels).
+Partition key is usually `user_id`. For group/share funnels, extract
+`group_id` / `share_id` from `event_info` when present.
 
-## 2. windowFunnel — mechanics and gotchas
+## 2. windowFunnel
 
 ```sql
 windowFunnel(window, [mode, ...])(timestamp, cond1, cond2, ..., condN)
 ```
 
-- **`window`'s unit matches the timestamp column's granularity.** `DateTime` →
-  seconds. State the unit in a SQL comment on every query.
-- Returns deepest **level** per entity (`1..N`). Per-step reach =
-  `countIf(level >= k)`. Conversion from start = `reached_k / reached_1`.
-- Pass conditions in **funnel order** using `event = '…'`.
-- Default mode allows interleaved events — don't add `strict_order` unless asked.
-- Use `'strict_increase'` if equal timestamps can mis-order steps.
-- Companion metrics (latency, AOV, K-factor) are **not** inside `windowFunnel` —
-  note in `caveats`; this step still emits one funnel SQL.
+- `DateTime` → window in **seconds**. Comment the unit on every query.
+- Conditions use **`event_name = '…'`** in funnel order.
+- Per-step reach = `countIf(level >= k)`.
 
-### Base funnel template (conversion by device)
+### Base funnel (conversion by device)
 
 ```sql
--- window: 86400 = 24h, since timestamp is DateTime (seconds)
+-- window: 86400 seconds
 WITH funnel_levels AS (
     SELECT
         user_id,
         any(device_type) AS device_type,
         windowFunnel(86400)(
             timestamp,
-            event = 'application_started',
-            event = 'purchase_completed'
+            event_name = 'destination_card_clicked',
+            event_name = 'application_started',
+            event_name = 'document_uploaded',
+            event_name = 'purchase_completed'
         ) AS level
-    FROM atlys.funnel_events
-    WHERE timestamp >= now() - INTERVAL 30 DAY
-      AND timestamp < now()
+    FROM atlys.activity_events
+    WHERE timestamp >= (SELECT max(timestamp) FROM atlys.activity_events) - INTERVAL 30 DAY
+      AND timestamp <= (SELECT max(timestamp) FROM atlys.activity_events)
     GROUP BY user_id
 )
 SELECT
     device_type,
     countIf(level >= 1) AS entities_step_1,
     countIf(level >= 2) AS entities_step_2,
-    countIf(level >= 2) / nullIf(countIf(level >= 1), 0) AS conversion_from_start
+    countIf(level >= 3) AS entities_step_3,
+    countIf(level >= 4) AS entities_step_4,
+    countIf(level >= 4) / nullIf(countIf(level >= 1), 0) AS conversion_from_start
 FROM funnel_levels
 GROUP BY device_type
 ORDER BY device_type
 ```
 
-Prefer a final SELECT with `step_name`, `entities`, `conversion_from_start`
-(and a segment column when cut) so the viz layer can map to §5.
+Prefer max(timestamp)-relative windows (contest data is historical).
 
-### Segmented funnel
+## 3. Payload fields (`event_info`)
 
-Keep the segment via `any(device_type)` (or first-event device) in the inner
-`GROUP BY user_id`, then group by that segment in the outer query.
+For OTP, revenue, capture quality, forex, etc.:
 
-## 3. Core funnel steps
+```sql
+JSONExtractString(event_info, 'otp_success')
+JSONExtractFloat(event_info, 'value')
+JSONExtractInt(event_info, 'retry_count')
+```
 
-| Partition key | Steps (`event` in order) | Suggested window |
-|---------------|--------------------------|------------------|
-| `user_id` | `destination_card_clicked` → `application_started` → `document_uploaded` → `purchase_completed` | 86400 |
+Only extract keys documented in context / `get_feature_meta` columns. Do not invent keys.
 
-Other feature funnels (Express, Group, Status Sharing, …) use the same table when
-those `event` values are present — still **`FROM atlys.funnel_events` only**.
+## 4. Core funnel steps
 
-## 4. Metrics alongside the funnel
+`destination_card_clicked` → `application_started` → `document_uploaded` → `purchase_completed`
 
-Latency, AOV/quantiles, churn, K-factor → second query / `caveats` only.
-
-## 5. Output contract for the visualization agent
+## 5. Output contract
 
 ```json
 {
-  "funnel": "core_purchase_conversion",
+  "sql": "…",
+  "funnel": true,
   "window_seconds": 86400,
-  "filters": {"start_date": "...", "end_date": "...", "segment": "device_type"},
-  "steps": [
-    {"step": "application_started", "entities": 12000, "conversion_from_start": 1.0},
-    {"step": "purchase_completed", "entities": 700, "conversion_from_start": 0.058}
-  ],
-  "segments": null
+  "step_names": ["…"],
+  "filters": {},
+  "tables_used": ["activity_events"],
+  "caveats": "…"
 }
 ```
 
-**Your `QuerySpec` must:**
-
-1. `sql` — one `SELECT` / `WITH … SELECT` with **`FROM atlys.funnel_events`** only.
-2. Fill `funnel`, `window_seconds`, `step_names`, `filters`.
-3. Prefer columns: `step`/`step_name`, `entities`, `conversion_from_start`
-   (+ segment column when cut).
-4. `tables_used` = `["funnel_events"]`; `caveats` for assumptions.
-
-## 6. QuerySpec output
-
-Return **only** `QuerySpec` JSON. No markdown fences inside the `sql` string.
+1. One `SELECT` / `WITH … SELECT` from **`activity_events` only**.
+2. Prefer step / entities / conversion_from_start (+ segment).
+3. `tables_used` = `["activity_events"]`.
