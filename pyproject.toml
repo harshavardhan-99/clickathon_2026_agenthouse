@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28",
     "pydantic-settings>=2.7",
     "python-dotenv>=1.0",
+    "python-multipart>=0.0.32",
     "sqlalchemy>=2.0",
     "sqlglot>=26.0",
     "uvicorn[standard]>=0.34",
@@ -29,9 +30,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["app", "instrumentation_agent"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"context_agent/src/context_agent" = "context_agent"
+"context_agent/sql" = "context_agent/sql"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "context_agent/src"]
 
 [tool.ruff]
 line-length = 100
