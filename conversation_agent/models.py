@@ -1,10 +1,10 @@
-"""Pydantic contracts for the Visualization Agent workflow."""
+"""Pydantic contracts for the Visualization Agent workflow + LibreChat analytics API."""
 
 from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -145,59 +145,156 @@ class ExecuteResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Legacy frontend contract (optional; not workflow final output this iteration)
+# LibreChat analytics contract — Part 1 (prompt → metadata-only blocks)
+# ---------------------------------------------------------------------------
+
+AgentInsightType = Literal["Trend", "Ranking", "Pivot", "Funnel"]
+DataInsightType = Literal["trend", "contributor", "pivot"]
+AgentTimeGrain = Literal["DAILY", "WEEKLY", "MONTHLY"]
+DataTimeGrain = Literal["day", "week", "month"]
+
+AGENT_TO_DATA_INSIGHT: dict[str, DataInsightType | list[DataInsightType]] = {
+    "Trend": "trend",
+    "Ranking": "contributor",
+    "Pivot": "pivot",
+    "Funnel": ["contributor", "trend"],
+}
+
+AGENT_TO_DATA_GRAIN: dict[str, DataTimeGrain] = {
+    "DAILY": "day",
+    "WEEKLY": "week",
+    "MONTHLY": "month",
+}
+
+
+class AnalyticsMetric(BaseModel):
+    metric_name: str = Field(..., description="Stable machine key, e.g. revenue")
+    metric_label: str = Field(..., description="Human label, e.g. Revenue")
+
+
+class AnalyticsDimensionFilter(BaseModel):
+    key: str
+    value: str
+
+
+class AnalyticsQueryRequest(BaseModel):
+    prompt: str
+    conversation_id: Optional[str] = None
+    history: Optional[list[dict[str, str]]] = Field(
+        None,
+        description="Prior turns: {role, content} oldest → newest",
+    )
+    tenant_id: Optional[str] = None
+    locale: Optional[str] = None
+
+
+class AnalyticsTextBlock(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class AnalyticsInsightBlock(BaseModel):
+    """Metadata-only insight block — never embeds chart points."""
+
+    type: Literal["insight"] = "insight"
+    title: Optional[str] = None
+    caption: Optional[str] = None
+    insight_type: AgentInsightType
+    metrics: list[AnalyticsMetric] = Field(..., min_length=1)
+    dimensions: list[str] = Field(default_factory=list)
+    fromTime: str = Field(..., description="Inclusive YYYY-MM-DD")
+    toTime: str = Field(..., description="Inclusive YYYY-MM-DD")
+    timeGrain: AgentTimeGrain
+
+    @model_validator(mode="after")
+    def _validate_cardinality(self) -> AnalyticsInsightBlock:
+        dims = self.dimensions or []
+        n_metrics = len(self.metrics)
+        kind = self.insight_type
+        if kind == "Trend" and dims:
+            raise ValueError("Trend requires empty dimensions")
+        if kind == "Ranking" and len(dims) != 1:
+            raise ValueError("Ranking requires exactly 1 dimension")
+        if kind == "Pivot" and len(dims) != 2:
+            raise ValueError("Pivot requires exactly 2 dimensions [row, col]")
+        if kind == "Funnel":
+            if n_metrics < 2:
+                raise ValueError("Funnel requires at least 2 metrics (ordered stages)")
+            if len(dims) > 1:
+                raise ValueError("Funnel allows 0 or 1 dimension")
+        return self
+
+
+AnalyticsBlock = Union[AnalyticsTextBlock, AnalyticsInsightBlock]
+
+
+class AnalyticsQueryMeta(BaseModel):
+    model: Optional[str] = None
+    latency_ms: Optional[int] = None
+    warnings: Optional[list[str]] = None
+
+
+class AnalyticsQueryResponse(BaseModel):
+    blocks: list[AnalyticsBlock] = Field(..., min_length=1)
+    meta: Optional[AnalyticsQueryMeta] = None
+
+
+# ---------------------------------------------------------------------------
+# LibreChat analytics contract — Part 2a (insight config → data)
 # ---------------------------------------------------------------------------
 
 
-class AnalyticsPoint(BaseModel):
-    fromTime: str = Field(..., description="ISO-8601 window start (inclusive)")
-    toTime: str = Field(..., description="ISO-8601 window end (exclusive or inclusive)")
-    metricName: str = Field(..., description="Metric key, e.g. conversion_rate")
-    metricValue: float = Field(..., description="Numeric metric value for this point")
-    dimensionName: Optional[str] = Field(
-        None,
-        description='Optional slice key, e.g. "country" / "device_type"',
-    )
-    dimensionValue: Optional[str] = Field(
-        None,
-        description='Optional slice value, e.g. "IN" / "iOS"',
-    )
+class AnalyticsDataPayload(BaseModel):
+    fromtime: str
+    totime: str
+    metric_name: str
+    timegrain: Optional[DataTimeGrain] = None
+    dimensions: Optional[list[str]] = None
+    filters: Optional[list[AnalyticsDimensionFilter]] = None
 
 
-class InsightData(BaseModel):
-    metricNames: list[str] = Field(
-        ...,
-        description="Metric names present in points",
-    )
-    points: list[AnalyticsPoint] = Field(
-        default_factory=list,
-        description="Aggregated points only — never raw event rows",
-    )
+class AnalyticsDataRequest(BaseModel):
+    payload: AnalyticsDataPayload
+    insight_type: DataInsightType
 
 
-class TextBlock(BaseModel):
-    type: Literal["text"] = "text"
-    text: str = Field(..., description="Narrative / caveat / SQL summary for the UI")
+class AnalyticsDataResponse(BaseModel):
+    data: list[dict[str, Any]] = Field(default_factory=list)
+    interpretation: Optional[str] = None
+    query: Optional[str] = None
+    latency_ms: Optional[int] = None
 
 
-class InsightBlock(BaseModel):
-    type: Literal["insight"] = "insight"
-    title: Optional[str] = Field(None, description="Short chart / insight title")
-    caption: Optional[str] = Field(None, description="Supporting sentence under the title")
-    kind: Literal["timeseries", "breakdown", "comparison", "table", "funnel"] = Field(
-        ...,
-        description="Chart kind: timeseries | breakdown | comparison | table | funnel",
-    )
-    data: InsightData
+# ---------------------------------------------------------------------------
+# LibreChat analytics contract — Part 2b (dimension values)
+# ---------------------------------------------------------------------------
 
 
-AnalyticsBlock = Union[TextBlock, InsightBlock]
+class AnalyticsDimensionsRequest(BaseModel):
+    dimension: str
+    fromtime: Optional[str] = None
+    totime: Optional[str] = None
+    metric_name: Optional[str] = None
+    filters: Optional[list[AnalyticsDimensionFilter]] = None
+    tenant_id: Optional[str] = None
 
 
-class AnalyticsResponse(BaseModel):
-    """Frontend analytics payload — ordered blocks of text and/or insights."""
+class AnalyticsDimensionsResponse(BaseModel):
+    dimension: str
+    values: list[str]
+    latency_ms: Optional[int] = None
 
-    blocks: list[AnalyticsBlock] = Field(
-        ...,
-        description="Ordered UI blocks; any mix of text and insight",
-    )
+
+class AnalyticsApiError(BaseModel):
+    error: str
+    code: Optional[
+        Literal[
+            "INVALID_REQUEST",
+            "UNAUTHORIZED",
+            "FORBIDDEN",
+            "NOT_FOUND",
+            "UPSTREAM_ERROR",
+            "TIMEOUT",
+        ]
+    ] = None
+    details: Optional[Any] = None

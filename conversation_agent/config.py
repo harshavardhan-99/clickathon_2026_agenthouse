@@ -108,3 +108,6 @@ DEFAULT_PROMPT = (
     "Show purchase conversion by device_type for the last 30 days "
     "(uniq users who purchased / uniq users who started an application)."
 )
+
+# LibreChat analytics dimensions cache (seconds)
+ANALYTICS_CACHE_TTL_SECONDS = _env_int("ANALYTICS_CACHE_TTL_SECONDS", 300)
