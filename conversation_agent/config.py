@@ -52,6 +52,10 @@ MODEL_ID = _env("MODEL_ID", "claude-sonnet-4-6")
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 GOOGLE_API_KEY = _env("GOOGLE_API_KEY")
 OPENAI_API_KEY = _env("OPENAI_API_KEY")
+# Gemini auth keys (AQ.*) need Vertex Express client: api_key + vertexai=True
+GOOGLE_GENAI_USE_VERTEXAI = _env_bool("GOOGLE_GENAI_USE_VERTEXAI", False)
+GOOGLE_CLOUD_PROJECT = _env("GOOGLE_CLOUD_PROJECT")
+GOOGLE_CLOUD_LOCATION = _env("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 # Langfuse (same project as LibreChat; filter UI by environment)
 LANGFUSE_ENABLED = _env_bool("LANGFUSE_ENABLED", True)
@@ -68,7 +72,7 @@ SESSION_DATABASE_URL = _env("SESSION_DATABASE_URL")
 AGENTOS_ID = _env("AGENTOS_ID", "clickathon-visualization")
 AGENTOS_DESCRIPTION = _env(
     "AGENTOS_DESCRIPTION",
-    "NL → schema → viz plan → SQL → ClickHouse MCP execute",
+    "NL → schema → viz plan → template SQL + ClickHouse (LLM/MCP fallback)",
 )
 AGENTOS_HOST = _env("AGENTOS_HOST", "0.0.0.0")
 AGENTOS_PORT = _env_int("AGENTOS_PORT", 7777)

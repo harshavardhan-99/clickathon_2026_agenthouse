@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from agno.tools.mcp import MCPTools
 from agno.workflow import Step
 from agno.workflow.types import StepInput, StepOutput
 from pydantic import BaseModel
 
 from conversation_agent.models import ExecuteResult, QuerySpec
 from conversation_agent.shared import run_query_via_mcp
+
+if TYPE_CHECKING:
+    from agno.tools.mcp import MCPTools
 
 STEP_NAME = "execute"
 

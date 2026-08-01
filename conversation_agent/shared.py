@@ -6,11 +6,12 @@ import base64
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
-
-from agno.tools.mcp import MCPTools
+from typing import Any, Optional, TYPE_CHECKING
 
 from conversation_agent import config
+
+if TYPE_CHECKING:
+    from agno.tools.mcp import MCPTools
 
 _DIR = Path(__file__).resolve().parent
 _langfuse_ready = False
@@ -105,11 +106,32 @@ def build_model() -> Any:
     if provider == "gemini":
         from agno.models.google import Gemini
 
-        if config.GOOGLE_API_KEY:
-            os.environ["GOOGLE_API_KEY"] = config.GOOGLE_API_KEY
-        elif not os.environ.get("GOOGLE_API_KEY"):
-            raise RuntimeError("Set GOOGLE_API_KEY in conversation_agent/config.py")
-        return Gemini(id=config.MODEL_ID, api_key=config.GOOGLE_API_KEY or None)
+        api_key = config.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError("Set GOOGLE_API_KEY in repo-root .env")
+        os.environ["GOOGLE_API_KEY"] = api_key
+
+        # New AI Studio auth keys (AQ.*) fail on the default Generative Language
+        # client unless Vertex Express mode is used (vertexai=True + api_key).
+        use_vertex = bool(config.GOOGLE_GENAI_USE_VERTEXAI) or api_key.startswith("AQ.")
+        if use_vertex:
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+            client_params: dict[str, Any] = {"api_key": api_key}
+            kwargs: dict[str, Any] = {
+                "id": config.MODEL_ID,
+                "api_key": api_key,
+                "vertexai": True,
+                "client_params": client_params,
+            }
+            if config.GOOGLE_CLOUD_PROJECT:
+                kwargs["project_id"] = config.GOOGLE_CLOUD_PROJECT
+                os.environ["GOOGLE_CLOUD_PROJECT"] = config.GOOGLE_CLOUD_PROJECT
+            if config.GOOGLE_CLOUD_LOCATION:
+                kwargs["location"] = config.GOOGLE_CLOUD_LOCATION
+                os.environ["GOOGLE_CLOUD_LOCATION"] = config.GOOGLE_CLOUD_LOCATION
+            return Gemini(**kwargs)
+
+        return Gemini(id=config.MODEL_ID, api_key=api_key)
 
     if provider == "openai":
         from agno.models.openai import OpenAIChat
@@ -258,6 +280,8 @@ def build_mcp_tools(
     refresh_connection: bool = False,
     include_tools: list[str] | None = None,
 ) -> MCPTools:
+    from agno.tools.mcp import MCPTools
+
     kwargs: dict[str, Any] = {
         "command": config.CLICKHOUSE_MCP_COMMAND,
         "env": clickhouse_mcp_env(),
