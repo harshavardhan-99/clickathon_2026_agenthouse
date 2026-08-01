@@ -37,8 +37,18 @@ CLICKHOUSE_PASSWORD = _env("CLICKHOUSE_PASSWORD")
 CLICKHOUSE_SECURE = _env_bool("CLICKHOUSE_SECURE", True)
 CLICKHOUSE_VERIFY = _env_bool("CLICKHOUSE_VERIFY", True)
 CLICKHOUSE_DATABASE = _env("CLICKHOUSE_DATABASE", "atlys")
+# Single Activity Schema table (envelope + event_info JSON)
+CLICKHOUSE_ACTIVITY_TABLE = _env("CLICKHOUSE_ACTIVITY_TABLE", "activity_events")
 CLICKHOUSE_CONNECT_TIMEOUT = _env_int("CLICKHOUSE_CONNECT_TIMEOUT", 30)
 CLICKHOUSE_SEND_RECEIVE_TIMEOUT = _env_int("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", 60)
+
+
+def activity_table_fqn() -> str:
+    """Fully-qualified activity table, e.g. atlys.activity_events."""
+    name = CLICKHOUSE_ACTIVITY_TABLE or "activity_events"
+    if "." in name:
+        return name
+    return f"{CLICKHOUSE_DATABASE}.{name}"
 
 # MCP
 CLICKHOUSE_MCP_COMMAND = _env(

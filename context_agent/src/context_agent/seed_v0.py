@@ -14,7 +14,10 @@ from typing import Any
 from context_agent.catalog import get_latest_context_items
 from context_agent.publish import publish_context_version
 
-# Core pre-purchase funnel from schema_context / clickhouse_datasets.
+# Core pre-purchase funnel on Single Activity Schema (activity_events).
+_ACTIVITY_TABLE = "atlys.activity_events"
+_EVENT_COL = "event_name"
+
 _FUNNEL_STEPS: list[tuple[str, int, str]] = [
     ("destination_card_clicked", 1, "Destination card clicked"),
     ("application_started", 2, "Application started"),
@@ -46,6 +49,30 @@ def _seed_upserts() -> list[dict[str, Any]]:
             },
         },
         {
+            "kind": "entity",
+            "item_key": "activity_events",
+            "label": "Single Activity Schema",
+            "payload": {
+                "table": _ACTIVITY_TABLE,
+                "columns": [
+                    "id",
+                    "timestamp",
+                    "event_name",
+                    "user_id",
+                    "application_id",
+                    "device_type",
+                    "os",
+                    "geoip_country_code",
+                    "destination",
+                    "event_info",
+                ],
+                "definition": (
+                    "One row per event. Envelope columns are top-level; "
+                    "event-specific fields live in event_info (JSON)."
+                ),
+            },
+        },
+        {
             "kind": "join",
             "item_key": "user_to_application",
             "label": "User → application",
@@ -63,12 +90,16 @@ def _seed_upserts() -> list[dict[str, Any]]:
             "payload": {
                 "formula": (
                     "users reaching purchase_completed / users at "
-                    "destination_card_clicked (windowFunnel on atlys.funnel_events)"
+                    f"destination_card_clicked (windowFunnel on {_ACTIVITY_TABLE} "
+                    f"using {_EVENT_COL})"
                 ),
                 "grain": "user",
-                "table": "atlys.funnel_events",
-                "event_column": "event",
-                "caveats": "Prefer max(timestamp)-relative windows; contest data ends ~2026-07-01.",
+                "table": _ACTIVITY_TABLE,
+                "event_column": _EVENT_COL,
+                "caveats": (
+                    "Prefer max(timestamp)-relative windows; payload metrics use "
+                    "JSONExtract on event_info."
+                ),
             },
         },
         {
@@ -76,9 +107,12 @@ def _seed_upserts() -> list[dict[str, Any]]:
             "item_key": "purchase_count",
             "label": "Purchase count",
             "payload": {
-                "formula": "count / uniqExact(user_id) where event = purchase_completed",
+                "formula": (
+                    f"count / uniqExact(user_id) where {_EVENT_COL} = purchase_completed"
+                ),
                 "grain": "event_or_user",
-                "table": "atlys.funnel_events",
+                "table": _ACTIVITY_TABLE,
+                "event_column": _EVENT_COL,
             },
         },
     ]
@@ -93,8 +127,8 @@ def _seed_upserts() -> list[dict[str, Any]]:
                     "funnel_key": "pre_purchase",
                     "step_order": order,
                     "step_name": step_name,
-                    "ch_table": "atlys.funnel_events",
-                    "event_column": "event",
+                    "ch_table": _ACTIVITY_TABLE,
+                    "event_column": _EVENT_COL,
                 },
             }
         )
@@ -107,7 +141,8 @@ def _seed_upserts() -> list[dict[str, Any]]:
             "payload": {
                 "hook": (
                     "Conversation discover_schema uses catalog tools only; "
-                    "keep context_versions seeded via seed_v0 / publish."
+                    "keep context_versions seeded via seed_v0 / publish. "
+                    f"Fact table is {_ACTIVITY_TABLE}."
                 ),
             },
         }
@@ -134,7 +169,7 @@ def seed_v0(*, force: bool = False) -> dict[str, Any]:
         return publish_context_version(
             context_version="v0",
             source="seed",
-            summary="Baseline seed from core pre-purchase funnel + entities/metrics",
+            summary="Baseline seed: SAS activity_events + core pre-purchase funnel",
             parent_version=None,
             upserts=_seed_upserts(),
             copy_forward=False,
@@ -142,8 +177,10 @@ def seed_v0(*, force: bool = False) -> dict[str, Any]:
 
     # force refresh on top of existing current
     parent = current["context_version"]
-    for n in range(0, 21):
-        candidate = "v0_refresh" if n == 0 else f"v0_refresh_{n}"
+    for n in range(1, 51):
+        candidate = f"v0_refresh_{n}"
+        if candidate == parent:
+            continue
         try:
             return publish_context_version(
                 context_version=candidate,
@@ -154,8 +191,10 @@ def seed_v0(*, force: bool = False) -> dict[str, Any]:
                 copy_forward=True,
             )
         except ValueError as exc:
-            if "already exists" not in str(exc):
-                raise
+            msg = str(exc)
+            if "already exists" in msg or "cannot equal parent_version" in msg:
+                continue
+            raise
     raise RuntimeError("could not find a free context_version id for seed refresh")
 
 

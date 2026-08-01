@@ -14,11 +14,11 @@ Context publishes context_versions / context_items → Postgres
         │
         ▼
   get_latest_context_items()   → meaning (context_*)
-  get_feature_meta(feature_id) → journey + events (meta_*)
+  get_feature_meta(feature_id) → journey + shared activity table + event_info columns
   publish_context_version(...) → new context version (copy-forward + deltas)
         │
         ▼
-  Imported by Conversation (or any Agno agent) as tools
+  Imported by Conversation (SAS builders on activity_events)
 ```
 
 ## The 3 tools

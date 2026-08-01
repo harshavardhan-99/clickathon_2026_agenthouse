@@ -18,6 +18,8 @@ from conversation_agent.shared import (
 
 STEP_NAME = "discover_schema"
 
+_FQN = config.activity_table_fqn()
+
 INSTRUCTIONS = [
     "You select which ClickHouse tables, columns, and event names are relevant "
     "to the user's analytics question.",
@@ -25,19 +27,22 @@ INSTRUCTIONS = [
     '"metric,funnel_step,entity,issue"). Use those items as the ONLY ground truth '
     "for business meaning, core funnel steps, metrics, joins, and known issues.",
     "If the question names a product feature (Express, Group, Forex, …), also call "
-    "get_feature_meta(feature_id) for journey_order, ch_table, and event columns.",
+    "get_feature_meta(feature_id) for journey_order, shared ch_table, and "
+    "event_info / columns maps.",
     "Do NOT call publish_context_version — Conversation is read-only.",
+    f"Physical model is a Single Activity Schema: prefer table {_FQN} with "
+    "envelope columns id, timestamp, event_name, user_id, application_id, "
+    "device_type, os, geoip_country_code, destination, and event_info (JSON payload). "
+    "Do not invent per-event physical tables.",
     "Do not invent tables, columns, or events that are not present in tool results. "
-    "There is no static schema document — catalog tools are the sole source.",
+    "Catalog tools are the sole business ground truth; SAS envelope is the physical shape.",
     "If get_latest_context_items returns no context_version / empty items, or tools "
     "fail, return a SchemaContext with empty tables and event_names, and explain "
     "the failure clearly in notes (do not guess schema).",
-    "Return a SchemaContext JSON: database (if known from tool payloads), tables "
-    "(each with name, columns [{name, type?}], event_names), optional notes and "
-    "rationale.",
-    "Prefer the minimum set of tables needed to answer the question. "
-    "Include shared envelope columns from tool payloads (e.g. timestamp, user_id, "
-    "device_type) when they are needed for filters, joins, or segments.",
+    "Return a SchemaContext JSON: database (if known), tables (each with name, "
+    "columns [{name, type?}], event_names), optional notes and rationale.",
+    "Prefer the activity table only. Include envelope columns needed for filters/"
+    "segments; list event_info keys only when tools document them for the question.",
     "When context_version is present in tool output, mention it in notes.",
 ]
 
@@ -62,6 +67,6 @@ def build_agent(*, db: Any = None) -> Agent:
 def build_step(*, db: Any = None) -> Step:
     return Step(
         name=STEP_NAME,
-        description="Select tables/columns/events using context catalog tools only",
+        description="Select SAS tables/columns/events using context catalog tools",
         agent=build_agent(db=db),
     )

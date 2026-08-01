@@ -13,8 +13,8 @@ User question
       │
       ▼
 ┌─────────────────┐
-│ discover_schema │  context catalog tools only
-│                 │  (get_latest_context_items, get_feature_meta)
+│ discover_schema │  context catalog tools + SAS shape
+│                 │  (activity_events envelope + event_info)
 │                 │  → SchemaContext   (LLM)
 └────────┬────────┘
          ▼
@@ -34,9 +34,9 @@ User question
 
 | `kind` | SQL pattern |
 |--------|-------------|
-| `funnel` | `windowFunnel` on `atlys.funnel_events` |
-| `timeseries` | daily `count` / `uniqExact` by event |
-| `breakdown` / `top_n` | `GROUP BY` segment |
+| `funnel` | `windowFunnel` on `atlys.activity_events` (`event_name`) |
+| `timeseries` | daily `count` / `uniqExact` by `event_name` |
+| `breakdown` / `top_n` | `GROUP BY` envelope segment |
 | `metric` | counts or rate (`event_names` = numerator,denominator) |
 | `comparison` | current vs previous half-window |
 
@@ -66,10 +66,13 @@ Use the **project venv** (`uv`), not system `pip` (Apple CLT Python can't instal
 
 ```bash
 uv sync
+# Build SAS fact table from existing per-event CH tables (once):
+uv run python conversation_agent/scripts/build_activity_events.py --drop
 uv run python -m conversation_agent.visualization_agent "conversion by device last 30 days"
 uv run python -m conversation_agent.visualization_agent --os
 ```
 
+`--sample N` loads at most N rows per source table for a quick smoke test.
 ## Tool usage (other agents)
 
 ```python

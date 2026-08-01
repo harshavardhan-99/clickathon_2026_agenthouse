@@ -57,7 +57,9 @@ class ContextCatalogTools(Toolkit):
         """Load Instrumentation meta for one feature (meta_features + meta_events).
 
         Use for feature-specific PM questions (Express, Group, Forex, …).
-        Events are ordered by journey_order; column shapes are in events.columns.
+        Events are ordered by journey_order. Under Single Activity Schema,
+        ch_table is typically the shared activity table; event-specific fields
+        are described in events.columns / event_info keys.
 
         Args:
             feature_id: e.g. \"01_express_checkout\"

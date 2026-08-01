@@ -18,6 +18,9 @@ def test_funnel_sql_parses():
     validate_select_sql(built.sql)
     assert "windowFunnel" in built.sql
     assert "application_started" in built.sql
+    assert "event_name =" in built.sql
+    assert "activity_events" in built.sql
+    assert "funnel_events" not in built.sql
 
 
 def test_breakdown_and_timeseries_parse():
@@ -30,10 +33,12 @@ def test_breakdown_and_timeseries_parse():
         )
     )
     validate_select_sql(b.sql)
+    assert "event_name" in b.sql
     t = build_sql(
         AnalyticsPlan(kind="timeseries", event_names=["application_started"])
     )
     validate_select_sql(t.sql)
+    assert "event_name" in t.sql
 
 
 def test_viz_spec_maps_to_funnel():
@@ -46,4 +51,5 @@ def test_viz_spec_maps_to_funnel():
     plan = plan_from_viz_spec(viz)
     assert plan.kind == "funnel"
     assert len(plan.event_names) >= 2
+    assert "activity_events" in plan.table
     validate_select_sql(build_sql(plan).sql)
