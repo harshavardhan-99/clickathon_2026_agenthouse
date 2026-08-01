@@ -1,89 +1,94 @@
-# Context Agent
+# Context Agent (catalog library)
 
-Maintains the **living business context layer**: entity definitions, metric semantics, join maps, and known issues — refreshed whenever Instrumentation adds tables or registry rows, and always served fresh to the Conversation (analytics) agent.
+Maintains the **living business context layer** in **Postgres** and exposes it as a
+**library of two deterministic tools** for Instrumentation / Conversation / others.
+There is **no Agno agent** in this package — other agents import the tools.
 
-Parent overview: [`../README.md`](../README.md)
+Parent overview: [`../README.md`](../README.md) · Table design: [`TABLES.md`](./TABLES.md)
 
-## Role in the system
+## Role
 
 ```
-base_context.md (suspect) + DDL + meta_* registry
+Instrumentation writes meta_features / meta_events → Postgres
+Context publishes context_versions / context_items → Postgres
         │
         ▼
-  Context Agent
+  get_latest_context_items()   → meaning (context_*)
+  get_feature_meta(feature_id) → journey + events (meta_*)
+  publish_context_version(...) → new context version (copy-forward + deltas)
         │
-        ├── reconcile contradictions
-        ├── update entity / join map
-        ├── version the context snapshot
-        └── expose latest defs → Conversation Agent
+        ▼
+  Imported by Conversation (or any Agno agent) as tools
 ```
 
-Treat `base_context.md` as **intentionally imperfect**. Metric conflicts and naming drift vs `data/ddl.sql` are part of the challenge — surface them; don’t silently paper over them.
+## The 3 tools
 
-## Inputs / outputs
+| Tool | Purpose |
+|------|---------|
+| `get_latest_context_items` | Current `context_version` + `context_items` |
+| `get_feature_meta(feature_id)` | `meta_features` + `meta_events` (Instrumentation) |
+| `publish_context_version` | New version: copy-forward + upserts/deletes |
 
-| | |
-|--|--|
-| **In** | `base_context.md`, existing + new DDL, `meta_event_registry` / `meta_field_registry` / `meta_schema_decisions` |
-| **Out** | Versioned living context (file, CH table, and/or vector store — justify in Langfuse), contradiction log, join map |
+```python
+from context_agent import (
+    get_context_catalog_tools,  # Agno Toolkit for another agent
+    get_latest_context_items,   # direct call
+    get_feature_meta,
+    publish_context_version,
+)
 
-## Must do
+# Inside Conversation / other agent:
+tools = [get_context_catalog_tools()]
 
-- [ ] Auto-update when Instrumentation adds tables/columns (hook on registry / schema changelog)
-- [ ] Feed Conversation the **latest** context (no stale snapshot)
-- [ ] Surface contradictions (e.g. conversion denominator: sessions vs `application_started`; `eta_shown` in DDL vs `visa_issuance_eta_days` in prose)
-- [ ] Keep entity join map current — prefer envelope columns from `meta_field_registry`
-- [ ] Record `context_version` so Analytics traces can cite it
+# Or without Agno:
+bundle = get_latest_context_items()
+meta = get_feature_meta("01_express_checkout")
+publish_context_version(
+    context_version="v1",
+    source="seed",
+    summary="Bootstrap from base context",
+    upserts=[
+        {
+            "kind": "entity",
+            "item_key": "user",
+            "label": "Traveller",
+            "payload": {"primary_id_field": "user_id"},
+        }
+    ],
+)
+```
 
-## Metric definitions to reconcile
+`get_postgres_sql_tools()` is optional admin/debug only.
 
-From `base_context.md` (validate against DDL + events):
+## Postgres tables
 
-| Metric | Claimed definition | Watch for |
-|--------|--------------------|-----------|
-| Leadership conversion | purchases ÷ **sessions** | May conflict with funnel dashboards |
-| Funnel conversion | `purchase_completed` users ÷ `application_started` users | Different denominator than leadership |
-| Drop-off | 1 − (users at N+1 ÷ users at N), distinct `user_id` | Stage ordering must match registry |
-| Passport pass rate | uploads with `is_crossed_failed_attempt_threshold = 0` ÷ uploads | Null / backfill rows |
-| On-time delivery | post-purchase | Not in these event tables |
+See [`TABLES.md`](./TABLES.md). Context DDL is only `context_*`; meta DDL lives under Instrumentation.
 
-## Known issues (K1–K7) — keep in context for insight narratives
+## Environment
 
-| ID | Issue | Analytic hook |
-|----|-------|----------------|
-| K1 | iOS WebKit OTP autofill | pay_now / express OTP → purchase on iOS, Gulf geos |
-| K2 | Passport model update Apr 2026 | Android capture failures |
-| K3 | MRZ OCR non-Latin | higher `retry_count` |
-| K4 | Schengen summer scarcity | seasonal softness, not product bug |
-| K5 | WhatsApp nudge Feb 2026 | return-to-funnel lifts |
-| K6 | SUMMER20 coupon | higher `coupon_applied`, lower `value` |
-| K7 | App 7.45.x rollout | funnel timing shifts |
+Repo-root `.env`:
 
-## Suggested storage shape
+```bash
+DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME
+```
 
-Justify the choice in Langfuse; common options:
+`SESSION_DATABASE_URL` is only needed if some other agent uses Agno sessions against Postgres.
 
-1. **ClickHouse table** `context_snapshots(version, updated_at, body, source_hash)` — queryable, versioned with warehouse  
-2. **Markdown / JSON file** in-repo for human review + CH mirror for agents  
-3. Optional **embeddings** for retrieval — only if it improves Conversation quality without hiding contradictions
+## Setup
 
-Minimum viable: versioned document + join map derived from registry envelope fields.
+```bash
+uv sync
+# Meta tables (Instrumentation):
+uv run python -m instrumentation_agent.init_db
+# Context tables (this package):
+uv run python context_agent/scripts/init_schema.py
 
-## Join map (funnel cheat sheet)
-
-- `user_id` — whole journey  
-- `application_id` — from `application_started` onward  
-- Order events by `timestamp`  
-- Filter `duplicate_id` / `is_back_filled` when clean funnels matter  
-
-Existing tables (context must stay aligned as new feature tables land):
-
-| Table | Kind |
-|-------|------|
-| destination_card_clicked → application_started → document_uploaded → purchase_completed | funnel |
-| search_typed, landing_page_scrolled, auth_completed, pay_now_clicked | supporting |
+# Optional health check service (no agent):
+PYTHONPATH=context_agent/src uv run uvicorn context_agent.app:app --reload --port 8001
+```
 
 ## Related
 
-- Upstream registry: [`../instrumentation_agent/README.md`](../instrumentation_agent/README.md)
-- Downstream insights: [`../conversation_agent/README.md`](../conversation_agent/README.md)
+- [`TABLES.md`](./TABLES.md)
+- [`../instrumentation_agent/README.md`](../instrumentation_agent/README.md)
+- [`../conversation_agent/README.md`](../conversation_agent/README.md)
