@@ -1,7 +1,7 @@
 import React from 'react';
-import { RecoilRoot } from 'recoil';
+import { RecoilRoot, useSetRecoilState } from 'recoil';
 import '@testing-library/jest-dom/extend-expect';
-import { MessagesSquare, NotebookPen } from 'lucide-react';
+import { FileText, MessagesSquare, NotebookPen } from 'lucide-react';
 import { render, fireEvent, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MutableSnapshot } from 'recoil';
@@ -21,6 +21,10 @@ jest.mock('~/store', () => {
     key: 'mock-customShortcuts',
     default: {},
   });
+  const selectedReportIdAtom = atom({
+    key: 'mock-selectedReportId',
+    default: null as string | null,
+  });
   return {
     __esModule: true,
     default: {
@@ -28,6 +32,7 @@ jest.mock('~/store', () => {
         atom({ key: `mock-conversationByIndex-${counter++}`, default: null }),
       newChatSwitchToHistory: switchAtom,
       customShortcuts: customShortcutsAtom,
+      selectedReportId: selectedReportIdAtom,
     },
   };
 });
@@ -54,6 +59,15 @@ jest.mock('~/components/Nav/AccountSettings', () => ({
 import ExpandedPanel from '../ExpandedPanel';
 import store from '~/store';
 
+function ClearReportButton() {
+  const setSelectedReportId = useSetRecoilState(store.selectedReportId);
+  return (
+    <button type="button" onClick={() => setSelectedReportId(null)}>
+      clear-report
+    </button>
+  );
+}
+
 const createLinks = () => [
   {
     title: 'com_ui_chat_history' as const,
@@ -64,6 +78,11 @@ const createLinks = () => [
     title: 'com_ui_prompts' as const,
     icon: NotebookPen,
     id: 'prompts',
+  },
+  {
+    title: 'com_ui_reports' as const,
+    icon: FileText,
+    id: 'reports',
   },
 ];
 
@@ -96,6 +115,7 @@ function renderPanel({
             onCollapse={onCollapse}
             onExpand={onExpand}
           />
+          <ClearReportButton />
         </ActivePanelProvider>
       </RecoilRoot>
     </QueryClientProvider>,
@@ -167,6 +187,44 @@ describe('ExpandedPanel', () => {
 
       expect(mockNewConversation).toHaveBeenCalledTimes(1);
       expect(localStorage.getItem('side:active-panel')).toBe('prompts');
+    });
+  });
+
+  describe('report panel sync', () => {
+    it('activates reports panel when a report is selected', () => {
+      renderPanel({
+        expanded: true,
+        initialPanel: DEFAULT_PANEL,
+        initializeState: ({ set }: MutableSnapshot) => {
+          set(store.selectedReportId, 'report-1');
+        },
+      });
+
+      expect(localStorage.getItem('side:active-panel')).toBe('reports');
+      expect(screen.getByRole('button', { name: 'com_ui_reports' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    it('activates chat history when leaving a report', () => {
+      renderPanel({
+        expanded: true,
+        initialPanel: DEFAULT_PANEL,
+        initializeState: ({ set }: MutableSnapshot) => {
+          set(store.selectedReportId, 'report-1');
+        },
+      });
+
+      expect(localStorage.getItem('side:active-panel')).toBe('reports');
+
+      fireEvent.click(screen.getByRole('button', { name: 'clear-report' }));
+
+      expect(localStorage.getItem('side:active-panel')).toBe(DEFAULT_PANEL);
+      expect(screen.getByRole('button', { name: 'com_ui_chat_history' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
     });
   });
 });
