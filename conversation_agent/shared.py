@@ -16,6 +16,61 @@ _DIR = Path(__file__).resolve().parent
 _langfuse_ready = False
 MCP_RUN_QUERY_TOOL = "run_query"
 
+# Workflow step ids — also used as Langfuse tags (step:<name>)
+WORKFLOW_STEP_NAMES = (
+    "discover_schema",
+    "pack_for_plan_visualization",
+    "plan_visualization",
+    "generate_query",
+    "execute",
+)
+
+
+def langfuse_base_tags(*, step: str | None = None) -> list[str]:
+    """Tags for Langfuse filters: environment + optional workflow step."""
+    labels = model_trace_labels()
+    environment = config.LANGFUSE_TRACING_ENVIRONMENT or "agno-dev"
+    tags = [
+        environment,
+        "agno",
+        labels["model_provider"],
+        labels["model_id"],
+        labels["model"],
+    ]
+    if step:
+        tags.extend([step, f"step:{step}"])
+    return tags
+
+
+def detect_workflow_step_from_span(span: Any) -> str | None:
+    """Best-effort step name from OTEL span name/attributes."""
+    attrs = getattr(span, "attributes", None) or {}
+    blobs: list[str] = [str(getattr(span, "name", "") or "")]
+    for key, value in attrs.items():
+        blobs.append(f"{key}={value}")
+        if isinstance(value, str):
+            blobs.append(value)
+        elif isinstance(value, (list, tuple)):
+            blobs.extend(str(v) for v in value)
+    haystack = " ".join(blobs).lower().replace("-", "_")
+    for step in WORKFLOW_STEP_NAMES:
+        if step in haystack or f"step:{step}" in haystack:
+            return step
+    if "legacy" in haystack:
+        return "legacy"
+    return None
+
+
+def agent_trace_metadata(*, step: str) -> dict[str, str]:
+    labels = model_trace_labels()
+    return {
+        "model_provider": labels["model_provider"],
+        "model_id": labels["model_id"],
+        "model": labels["model"],
+        "step": step,
+        "langfuse_environment": config.LANGFUSE_TRACING_ENVIRONMENT or "agno-dev",
+    }
+
 
 def resolve_path(path: str) -> Path:
     p = Path(path)
@@ -101,6 +156,7 @@ def setup_langfuse() -> None:
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
     labels = model_trace_labels()
+    environment = config.LANGFUSE_TRACING_ENVIRONMENT or "agno-dev"
     llm_system = {
         "claude": "anthropic",
         "gemini": "google",
@@ -109,6 +165,10 @@ def setup_langfuse() -> None:
 
     class ModelMetadataSpanProcessor(SpanProcessor):
         def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+            # First-class Langfuse environment (filterable in UI)
+            span.set_attribute("langfuse.environment", environment)
+            span.set_attribute("deployment.environment", environment)
+            span.set_attribute("deployment.environment.name", environment)
             span.set_attribute("langfuse.trace.metadata.model_provider", labels["model_provider"])
             span.set_attribute("langfuse.trace.metadata.model_id", labels["model_id"])
             span.set_attribute("langfuse.trace.metadata.model", labels["model"])
@@ -122,9 +182,13 @@ def setup_langfuse() -> None:
             span.set_attribute("langfuse.observation.model.name", labels["model_id"])
             span.set_attribute("llm.model_name", labels["model_id"])
             span.set_attribute("llm.system", llm_system)
+            step = detect_workflow_step_from_span(span)
+            if step:
+                span.set_attribute("langfuse.observation.metadata.step", step)
+                span.set_attribute("langfuse.trace.metadata.step", step)
             span.set_attribute(
                 "langfuse.trace.tags",
-                [labels["model_provider"], labels["model_id"], labels["model"]],
+                langfuse_base_tags(step=step),
             )
 
         def on_end(self, span: ReadableSpan) -> None:
@@ -140,6 +204,8 @@ def setup_langfuse() -> None:
     os.environ["LANGFUSE_SECRET_KEY"] = config.LANGFUSE_SECRET_KEY
     os.environ["LANGFUSE_HOST"] = config.LANGFUSE_BASE_URL
     os.environ["LANGFUSE_BASE_URL"] = config.LANGFUSE_BASE_URL
+    os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = environment
+    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = f"langfuse.environment={environment}"
 
     auth = base64.b64encode(
         f"{config.LANGFUSE_PUBLIC_KEY}:{config.LANGFUSE_SECRET_KEY}".encode()
@@ -148,7 +214,18 @@ def setup_langfuse() -> None:
     os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"{base}/api/public/otel"
     os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {auth}"
 
-    tracer_provider = TracerProvider()
+    from opentelemetry.sdk.resources import Resource
+
+    tracer_provider = TracerProvider(
+        resource=Resource.create(
+            {
+                "langfuse.environment": environment,
+                "deployment.environment": environment,
+                "deployment.environment.name": environment,
+                "service.name": "clickathon-visualization-agent",
+            }
+        )
+    )
     tracer_provider.add_span_processor(ModelMetadataSpanProcessor())
     tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
     trace_api.set_tracer_provider(tracer_provider=tracer_provider)

@@ -9,7 +9,12 @@ from agno.workflow import Step
 
 from conversation_agent import config
 from conversation_agent.models import QuerySpec
-from conversation_agent.shared import build_model, load_text_file, model_trace_labels, setup_langfuse
+from conversation_agent.shared import (
+    agent_trace_metadata,
+    build_model,
+    load_text_file,
+    setup_langfuse,
+)
 
 STEP_NAME = "generate_query"
 
@@ -38,7 +43,6 @@ def load_query_skill() -> str:
 
 def build_agent(*, db: Any = None) -> Agent:
     setup_langfuse()
-    labels = model_trace_labels()
     skill_body = load_query_skill()
     return Agent(
         id=f"{config.AGENT_ID}-generate-query",
@@ -54,12 +58,7 @@ def build_agent(*, db: Any = None) -> Agent:
         use_json_mode=True,
         markdown=False,
         add_history_to_context=False,
-        metadata={
-            "model_provider": labels["model_provider"],
-            "model_id": labels["model_id"],
-            "model": labels["model"],
-            "step": STEP_NAME,
-        },
+        metadata=agent_trace_metadata(step=STEP_NAME),
     )
 
 

@@ -9,7 +9,7 @@ from agno.workflow import Step
 
 from conversation_agent import config
 from conversation_agent.models import VizSpec
-from conversation_agent.shared import build_model, model_trace_labels, setup_langfuse
+from conversation_agent.shared import agent_trace_metadata, build_model, setup_langfuse
 
 STEP_NAME = "plan_visualization"
 
@@ -28,7 +28,6 @@ INSTRUCTIONS = [
 
 def build_agent(*, db: Any = None) -> Agent:
     setup_langfuse()
-    labels = model_trace_labels()
     return Agent(
         id=f"{config.AGENT_ID}-plan-visualization",
         name="Plan Visualization",
@@ -40,12 +39,7 @@ def build_agent(*, db: Any = None) -> Agent:
         use_json_mode=True,
         markdown=False,
         add_history_to_context=False,
-        metadata={
-            "model_provider": labels["model_provider"],
-            "model_id": labels["model_id"],
-            "model": labels["model"],
-            "step": STEP_NAME,
-        },
+        metadata=agent_trace_metadata(step=STEP_NAME),
     )
 
 

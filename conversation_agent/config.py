@@ -53,11 +53,12 @@ ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 GOOGLE_API_KEY = _env("GOOGLE_API_KEY")
 OPENAI_API_KEY = _env("OPENAI_API_KEY")
 
-# Langfuse
+# Langfuse (same project as LibreChat; filter UI by environment)
 LANGFUSE_ENABLED = _env_bool("LANGFUSE_ENABLED", True)
 LANGFUSE_SECRET_KEY = _env("LANGFUSE_SECRET_KEY")
 LANGFUSE_PUBLIC_KEY = _env("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_BASE_URL = _env("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+LANGFUSE_TRACING_ENVIRONMENT = _env("LANGFUSE_TRACING_ENVIRONMENT", "agno-dev")
 
 # Optional Postgres
 DATABASE_URL = _env("DATABASE_URL")
