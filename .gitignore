@@ -1,3 +1,7 @@
+# =============================================================================
+# Root — Python / AgentHouse
+# =============================================================================
+
 # Python
 __pycache__/
 *.py[cod]
@@ -7,6 +11,8 @@ __pycache__/
 .venv/
 venv/
 env/
+**/.venv/
+**/venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
@@ -16,23 +22,175 @@ build/
 
 # SQLite / local DBs
 *.db
+*.db-journal
+*.db-wal
 *.sqlite
 *.sqlite3
+*.sqlite-journal
+*.sqlite-wal
 
 # Env / secrets
-.env
-.env.*
+.env*
 !.env.example
+!**/.env.example
+!**/.env.test.example
+my.secrets
+*.pem
+*.cert
 
 # OS / IDE
 .DS_Store
 .idea/
+*.iml
 *.swp
 *.swo
+*.code-workspace
+.vscode/settings.json
+.idx
+monospace.json
 
 # Local agent artifacts
 conversation_agent/tmp/
 out/
 *.log
-
 uv.lock
+
+# Shared tooling / deps
+node_modules/
+bower_components/
+coverage
+.turbo
+.grunt
+lib-cov
+*.d.ts
+
+# AI / assistants (repo-wide)
+.clineignore
+.cursor
+.aider*
+.bg-shell/
+.claude/
+.codex/
+.copilot/
+.openai/
+.tabnine/
+.codeium
+.pi/
+*.local.md
+
+# Floobits
+.floo
+.floobit
+.flooignore
+
+# =============================================================================
+# Frontend (LibreChat) — paths scoped under /frontend
+# =============================================================================
+
+# Logs / local data dirs
+/frontend/data-node
+/frontend/meili_data*
+/frontend/data/
+/frontend/logs
+/frontend/uploads/
+/frontend/images
+/frontend/release/
+
+# Runtime
+/frontend/pids
+/frontend/*.pid
+/frontend/*.seed
+
+# CI / redis dump
+/frontend/test-image*
+/frontend/dump.rdb
+
+# Translations
+/frontend/config/translations/stores/*
+/frontend/client/src/localization/languages/*_missing_keys.json
+
+# Compiled / public build artifacts
+/frontend/public/main.js
+/frontend/public/main.js.map
+/frontend/public/main.js.LICENSE.txt
+/frontend/client/public/images/
+/frontend/client/public/main.js
+/frontend/client/public/main.js.map
+/frontend/client/public/main.js.LICENSE.txt
+
+# Azure Blob Storage Emulator (Azurite)
+/frontend/__azurite**
+/frontend/__blobstorage__/**/*
+
+# Nested node_modules (also covered by global node_modules/)
+/frontend/api/node_modules/
+/frontend/client/node_modules/
+
+# Config (do not commit local LibreChat config)
+/frontend/librechat.yaml
+/frontend/librechat.yml
+/frontend/.npmrc
+/frontend/cache.json
+/frontend/api/data/
+/frontend/owner.yml
+/frontend/archive
+/frontend/src/style - official.css
+/frontend/config.local.ts
+/frontend/auth.json
+/frontend/junit.xml
+/frontend/**/storageState.json
+
+# E2E / Playwright
+/frontend/e2e/specs/.test-results/
+/frontend/e2e/.generated/
+/frontend/e2e/playwright-report/
+/frontend/playwright/.cache/
+/frontend/.playwright-mcp/*
+
+# Docker override (local)
+/frontend/docker-compose.override.yaml
+/frontend/docker-compose.override.yml
+
+# Meilisearch
+/frontend/meilisearch
+/frontend/meilisearch.exe
+/frontend/data.ms/*
+
+# Packages / images
+/frontend/packages/ux-shared/
+
+# Keep this Data settings tab (un-ignore under frontend/data ignore)
+!/frontend/client/src/components/Nav/SettingsTabs/Data/
+
+# Helm
+/frontend/helm/librechat/Chart.lock
+/frontend/helm/**/charts/
+/frontend/helm/**/.values.yaml
+
+# Type stubs we do commit
+!/frontend/client/src/@types/i18next.d.ts
+!/frontend/client/src/@types/react.d.ts
+!/frontend/**/vite-env.d.ts
+
+# Claude Flow / misc frontend tooling
+/frontend/.claude/settings.local.json
+/frontend/.mcp.json
+/frontend/claude-flow.config.json
+/frontend/.swarm/
+/frontend/.hive-mind/
+/frontend/.claude-flow/
+/frontend/memory/
+/frontend/coordination/
+/frontend/memory/claude-flow-data.json
+/frontend/memory/sessions/*
+!/frontend/memory/sessions/README.md
+/frontend/memory/agents/*
+!/frontend/memory/agents/README.md
+/frontend/coordination/memory_bank/*
+/frontend/coordination/subtasks/*
+/frontend/coordination/orchestration/*
+/frontend/claude-flow
+/frontend/hive-mind-prompt-*.txt
+/frontend/CLAUDE.md
+/frontend/.gsd
+/frontend/codedb.snapshot
