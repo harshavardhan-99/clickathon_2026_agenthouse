@@ -2,20 +2,22 @@
 
 Maintains the **living business context layer**: entity definitions, metric semantics, join maps, and known issues — refreshed whenever Instrumentation adds tables or registry rows, and always served fresh to the Conversation (analytics) agent.
 
-Parent overview: [`../README.md`](../README.md)
+Parent overview: [`../README.md`](../README.md) (architecture + **`uv sync`** local setup).
+
+> **Status:** design-only. Hosted on the same FastAPI + Agno AgentOS app as the other agents; context snapshots land in **Postgres**.
 
 ## Role in the system
 
 ```
-base_context.md (suspect) + DDL + meta_* registry
+base_context.md (suspect) + DDL + Postgres meta_* registry
         │
         ▼
-  Context Agent
-        │
-        ├── reconcile contradictions
-        ├── update entity / join map
-        ├── version the context snapshot
-        └── expose latest defs → Conversation Agent
+┌──────────────────────────────────────┐
+│  FastAPI (hosts Agno AgentOS)        │
+│  Context Agent                       │
+│    reconcile → version snapshot → PG │
+│    expose latest defs → Conversation │
+└──────────────────────────────────────┘
 ```
 
 Treat `base_context.md` as **intentionally imperfect**. Metric conflicts and naming drift vs `data/ddl.sql` are part of the challenge — surface them; don’t silently paper over them.
@@ -25,7 +27,7 @@ Treat `base_context.md` as **intentionally imperfect**. Metric conflicts and nam
 | | |
 |--|--|
 | **In** | `base_context.md`, existing + new DDL, `meta_event_registry` / `meta_field_registry` / `meta_schema_decisions` |
-| **Out** | Versioned living context (file, CH table, and/or vector store — justify in Langfuse), contradiction log, join map |
+| **Out** | Versioned living context in **Postgres** (`context_snapshots`), contradiction log, join map |
 
 ## Must do
 
