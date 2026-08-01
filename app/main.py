@@ -11,8 +11,8 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from instrumentation_agent.db.connection import apply_meta_registry_ddl
 from instrumentation_agent.routes import api_router
-from instrumentation_agent.utils.postgres import apply_meta_registry_ddl
 
 
 @asynccontextmanager
@@ -32,11 +32,3 @@ app = FastAPI(
 )
 
 app.include_router(api_router)
-
-# When ready:
-# from agno.agent import Agent
-# from agno.os import AgentOS
-# from instrumentation_agent.tools.instrumentation import InstrumentationTools
-# instrumentation_agent = Agent(name="Instrumentation", tools=[InstrumentationTools()])
-# agent_os = AgentOS(id="agenthouse", agents=[instrumentation_agent], base_app=app)
-# app = agent_os.get_app()

@@ -1,14 +1,12 @@
-"""Agno Toolkit for instrumentation (profile → CH → Postgres registry)."""
+"""Agno Toolkit for instrumentation — delegates to interfaces."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from agno.tools import Toolkit
 
-from instrumentation_agent.utils.pipeline import run_instrumentation
-from instrumentation_agent.utils.registry import get_feature_registry
+from instrumentation_agent.interfaces.instrumentation import get_registry, instrument_feature
 
 
 class InstrumentationTools(Toolkit):
@@ -22,13 +20,12 @@ class InstrumentationTools(Toolkit):
         super().__init__(name="instrumentation_tools", tools=tools, **kwargs)
 
     def instrument_feature(self, feature_id: str) -> str:
-        """Onboard a feature: create ClickHouse tables, load events, upsert Postgres metadata.
+        """Onboard a feature: ClickHouse tables + Postgres metadata.
 
         Args:
             feature_id: Spec folder name under SPECS_ROOT (e.g. 01_express_checkout).
         """
-        result = run_instrumentation(feature_id)
-        return json.dumps(result)
+        return instrument_feature(feature_id).model_dump_json()
 
     def get_registry(self, feature_id: str) -> str:
         """Return Postgres meta_features + meta_events for a feature_id.
@@ -36,4 +33,4 @@ class InstrumentationTools(Toolkit):
         Args:
             feature_id: Feature id previously instrumented.
         """
-        return json.dumps(get_feature_registry(feature_id))
+        return get_registry(feature_id).model_dump_json()

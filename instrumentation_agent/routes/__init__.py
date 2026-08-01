@@ -1,4 +1,4 @@
-"""FastAPI routers."""
+"""FastAPI route package — aggregate routers for the app host."""
 
 from fastapi import APIRouter
 
@@ -8,3 +8,5 @@ from instrumentation_agent.routes.instrumentation import router as instrumentati
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(instrumentation_router)
+
+__all__ = ["api_router"]

@@ -1,1 +1,1 @@
-"""Agno toolkits exposed to agents hosted on FastAPI."""
+"""Agno toolkits — import from concrete modules (e.g. tools.instrumentation)."""

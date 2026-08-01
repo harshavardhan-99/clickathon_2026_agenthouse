@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from instrumentation_agent.models import FeaturePaths
+from instrumentation_agent.models.domain import FeaturePaths
 from instrumentation_agent.settings import Settings, get_settings
 
 

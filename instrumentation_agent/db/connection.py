@@ -1,4 +1,4 @@
-"""Postgres engine + metadata DDL bootstrap."""
+"""Postgres connection helpers (engine + DDL bootstrap). CRUD lives in table classes."""
 
 from __future__ import annotations
 
@@ -9,20 +9,17 @@ from sqlalchemy import Engine, create_engine, text
 from instrumentation_agent.settings import get_settings
 
 _SQL_PATH = Path(__file__).resolve().parents[1] / "sql" / "postgres_meta_registry.sql"
-
 _engine: Engine | None = None
 
 
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        settings = get_settings()
-        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+        _engine = create_engine(get_settings().database_url, pool_pre_ping=True)
     return _engine
 
 
 def apply_meta_registry_ddl(engine: Engine | None = None) -> None:
-    """Apply ``meta_features`` + ``meta_events`` DDL (idempotent CREATE)."""
     eng = engine or get_engine()
     ddl = _SQL_PATH.read_text(encoding="utf-8")
     raw = eng.raw_connection()
@@ -37,7 +34,7 @@ def apply_meta_registry_ddl(engine: Engine | None = None) -> None:
         raw.close()
 
 
-def ping_postgres(engine: Engine | None = None) -> bool:
+def ping(engine: Engine | None = None) -> bool:
     eng = engine or get_engine()
     with eng.connect() as conn:
         conn.execute(text("SELECT 1"))

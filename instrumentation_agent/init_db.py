@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from instrumentation_agent.utils.postgres import apply_meta_registry_ddl, ping_postgres
+from instrumentation_agent.db.connection import apply_meta_registry_ddl, ping
 
 
 def main() -> None:
     print("Pinging Postgres…")
-    ping_postgres()
+    ping()
     print("Applying meta registry DDL…")
     apply_meta_registry_ddl()
     print("Done.")

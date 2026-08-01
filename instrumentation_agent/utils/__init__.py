@@ -1,1 +1,1 @@
-"""Shared utilities: paths, profiling, DB clients, registry, pipeline."""
+"""Reusable utility modules (import from concrete modules, not this package)."""

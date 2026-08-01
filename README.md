@@ -58,11 +58,12 @@ clickathon_2026_agenthouse/
 ├── app/
 │   └── main.py                    ← thin FastAPI host (mounts agent routers)
 ├── instrumentation_agent/         ← full layer package
-│   ├── routes/                    ← FastAPI routers
+│   ├── routes/                    ← thin FastAPI routers
+│   ├── interfaces/                ← entrypoints used by routers/tools
+│   ├── models/                    ← request/response + domain models
+│   ├── db/                        ← CRUD classes (meta_features, meta_events)
+│   ├── utils/                     ← shared helpers; ClickHouse via SQLGlot
 │   ├── tools/                     ← Agno Toolkits
-│   ├── interfaces/                ← Pydantic schemas
-│   ├── models/                    ← domain dataclasses
-│   ├── utils/                     ← pipeline, profiler, DB clients
 │   ├── sql/
 │   ├── settings.py
 │   └── init_db.py

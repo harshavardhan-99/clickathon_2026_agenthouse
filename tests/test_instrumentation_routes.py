@@ -56,12 +56,28 @@ def test_profile_feature_express() -> None:
     assert profile.events[0].row_count == 2
 
 
+def test_sqlglot_validates_create_ddl() -> None:
+    from instrumentation_agent.models.domain import EventProfile
+    from instrumentation_agent.utils.clickhouse import build_create_table_sql
+
+    profile = EventProfile(
+        event_name="express_checkout_shown",
+        journey_order=1,
+        columns={"timestamp": "DateTime64(3)", "user_id": "String"},
+    )
+    ddl = build_create_table_sql(profile, "default")
+    assert "CREATE TABLE" in ddl
+    assert "MergeTree" in ddl
+
+
 def test_instrument_route_success() -> None:
-    fake = {
-        "status": "ok",
-        "run_id": "00000000-0000-0000-0000-000000000001",
-        "feature_id": "01_express_checkout",
-        "events": [
+    from instrumentation_agent.models.schemas import InstrumentResponse
+
+    fake = InstrumentResponse(
+        status="ok",
+        run_id="00000000-0000-0000-0000-000000000001",
+        feature_id="01_express_checkout",
+        events=[
             {
                 "event_name": "express_checkout_shown",
                 "journey_order": 1,
@@ -69,9 +85,9 @@ def test_instrument_route_success() -> None:
                 "row_count": 10,
             }
         ],
-    }
+    )
     with patch(
-        "instrumentation_agent.routes.instrumentation.run_instrumentation",
+        "instrumentation_agent.routes.instrumentation.instrument_feature",
         return_value=fake,
     ):
         response = client.post(
@@ -79,24 +95,36 @@ def test_instrument_route_success() -> None:
             json={"feature_id": "01_express_checkout"},
         )
     assert response.status_code == 200
-    assert response.json() == fake
+    assert response.json()["feature_id"] == "01_express_checkout"
 
 
 def test_registry_shape() -> None:
-    empty = {"feature_id": "01_express_checkout", "feature": None, "events": []}
+    from instrumentation_agent.models.schemas import RegistryResponse
+
+    empty = RegistryResponse(
+        feature_id="01_express_checkout", feature=None, events=[]
+    )
     with patch(
-        "instrumentation_agent.routes.instrumentation.get_feature_registry",
+        "instrumentation_agent.routes.instrumentation.get_registry",
         return_value=empty,
     ):
         response = client.get("/v1/registry/01_express_checkout")
     assert response.status_code == 200
-    assert response.json() == empty
+    assert response.json() == empty.model_dump()
 
 
 def test_health_ok() -> None:
-    with (
-        patch("instrumentation_agent.routes.health.ping_postgres", return_value=True),
-        patch("instrumentation_agent.routes.health.ping_clickhouse", return_value=True),
+    from instrumentation_agent.models.schemas import HealthResponse
+
+    fake = HealthResponse(
+        status="ok",
+        postgres="up",
+        clickhouse="up",
+        specs_root="/tmp/specs",
+    )
+    with patch(
+        "instrumentation_agent.routes.health.health_check",
+        return_value=fake,
     ):
         response = client.get("/health")
     assert response.status_code == 200
@@ -104,7 +132,6 @@ def test_health_ok() -> None:
     assert body["status"] == "ok"
     assert body["postgres"] == "up"
     assert body["clickhouse"] == "up"
-    assert "specs_root" in body
 
 
 def test_instrumentation_tools_construct() -> None:

@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from instrumentation_agent.models import EventProfile, FeatureProfile
+from instrumentation_agent.models.domain import EventProfile, FeatureProfile
 
 # First backtick on a markdown bullet = journey event name.
 _BULLET_EVENT_RE = re.compile(r"^\s*-\s*`([a-z][a-z0-9_]*)`", re.MULTILINE)
