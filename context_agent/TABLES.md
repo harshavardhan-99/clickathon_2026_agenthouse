@@ -1,20 +1,26 @@
 # Context Agent — Postgres tables
 
-Living **meta catalog** + **business context** for Atlys. All of these live in **Postgres**.  
-ClickHouse holds event facts, aggregate tables, MVs, and views; Postgres only **describes** them.
+Catalog for the **living context layer** and the **metadata registry** it consumes.  
+All tables below live in **Postgres**. ClickHouse holds event facts / MVs / aggregates; Postgres only describes them and stores business meaning.
 
-**Write path:** Instrumentation Agent calls Context Agent → upsert meta → reconcile/publish context.  
-**Read path:** Conversation Agent reads latest `context_version` + meta, then queries ClickHouse.
+Aligned with the updated AgentHouse design ([`../README.md`](../README.md), [`../instrumentation_agent/README.md`](../instrumentation_agent/README.md)):
 
-**Common columns:** every table includes `created_at` and `updated_at` (`TIMESTAMPTZ`).
+| Writer | Tables |
+|--------|--------|
+| **Instrumentation** | `instrumentation_runs`, `meta_*` |
+| **Context** | `context_*` (reads `meta_*`, publishes versions) |
+| **Conversation** | read-only on both |
+
+**Common columns:** every table includes `created_at` and `updated_at` (`TIMESTAMPTZ`).  
+No `langfuse_trace_id` columns (tracing stays in Langfuse, not the registry).
 
 ```
-features
- └── meta_ingest_runs
- └── meta_table_registry      (raw / aggregate tables)
- └── meta_view_registry       (materialized views / normal views)
- └── meta_event_registry
-      └── meta_field_registry
+instrumentation_runs
+meta_table_registry          (raw + aggregate CH tables)
+meta_view_registry           (materialized + normal views)
+meta_event_registry
+ └── meta_field_registry
+meta_schema_decisions
 
 context_versions
  ├── context_snapshots
@@ -28,31 +34,20 @@ context_versions
 
 ---
 
-## 1. `features`
+## Meta registry (Instrumentation → Postgres)
 
-**Use:** Catalog of product features / specs.
+### 1. `instrumentation_runs`
 
-| feature_id | name | spec_path | status | created_at | updated_at |
-|------------|------|-----------|--------|------------|------------|
-| `01_express_checkout` | Express Checkout | `specs/01_express_checkout/spec.md` | `instrumented` | `2026-06-08 10:00:00+00` | `2026-06-08 12:00:00+00` |
-| `pre_purchase_funnel` | Core pre-purchase funnel | `base_context.md` | `active` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
+**Use:** One pipeline run per feature instrumentation (idempotency / audit).
 
----
-
-## 2. `meta_ingest_runs`
-
-**Use:** One row per Instrumentation → Context call (idempotency + audit).
-
-| run_id | feature_id | status | context_version_out | created_at | updated_at |
-|--------|------------|--------|---------------------|------------|------------|
-| `a1b2c3…` | `01_express_checkout` | `success` | `v3` | `2026-06-08 12:00:00+00` | `2026-06-08 12:01:00+00` |
-| `d4e5f6…` | `01_express_checkout` | `success` | `v4` | `2026-06-10 09:00:00+00` | `2026-06-10 09:01:00+00` |
-
-*(Second run = new field discovered, e.g. `otp_channel`.)*
+| id | feature_id | strategy | strategy_rationale | context_version | created_at | updated_at |
+|----|------------|----------|--------------------|-----------------|------------|------------|
+| `a1b2c3…` | `01_express_checkout` | `one_table_per_event` | Events differ enough to stay separate | `v3` | `2026-06-08 12:00:00+00` | `2026-06-08 12:01:00+00` |
+| `d4e5f6…` | `01_express_checkout` | `one_table_per_event` | Re-run after new field `otp_channel` | `v4` | `2026-06-10 09:00:00+00` | `2026-06-10 09:01:00+00` |
 
 ---
 
-## 3. `meta_table_registry`
+### 2. `meta_table_registry`
 
 **Use:** ClickHouse objects that **store data** (raw event tables + aggregate / rollup tables).
 
@@ -63,66 +58,77 @@ context_versions
 
 ---
 
-## 4. `meta_view_registry`
+### 3. `meta_view_registry`
 
-**Use:** Materialized views (pipes into a target table) and normal views (saved SQL, no storage).
+**Use:** Materialized views (pipe into a target table) and normal views (saved SQL, no storage).
 
 | view_name | view_type | source_tables | target_table | stores_data | purpose | created_at | updated_at |
 |-----------|-----------|---------------|--------------|-------------|---------|------------|------------|
-| `mv_express_otp_daily` | `materialized_view` | `{express_checkout_events}` | `express_otp_stats_daily` | `false` | On insert, roll OTP success into daily agg table | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `v_express_checkout_funnel` | `view` | `{express_checkout_events}` | `null` | `false` | Convenience SELECT for Express funnel stages | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `mv_express_otp_daily` | `materialized_view` | `{express_checkout_events}` | `express_otp_stats_daily` | `false` | On insert, roll OTP stats into daily agg | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `v_express_checkout_funnel` | `view` | `{express_checkout_events}` | `null` | `false` | Convenience SELECT for Express stages | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
 
-**Rule for Conversation:** query the **target aggregate table**, not the MV itself; use a normal view only as a SQL helper.
+**Conversation rule:** query the **target aggregate table**, not the MV; treat a normal view as SQL helper only.
 
 ---
 
-## 5. `meta_event_registry`
+### 4. `meta_event_registry`
 
 **Use:** Event name → ClickHouse table + funnel stage.
 
-| feature_id | event_name | target_table | funnel_stage | kind | created_at | updated_at |
-|------------|------------|--------------|--------------|------|------------|------------|
-| `01_express_checkout` | `express_checkout_shown` | `express_checkout_events` | `1` | `feature` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `01_express_checkout` | `otp_entered` | `express_checkout_events` | `4` | `feature` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| feature_id | event_name | target_table | funnel_stage | sample_count | run_id | created_at | updated_at |
+|------------|------------|--------------|--------------|--------------|--------|------------|------------|
+| `01_express_checkout` | `express_checkout_shown` | `express_checkout_events` | `1` | `1500` | `a1b2c3…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `01_express_checkout` | `otp_entered` | `express_checkout_events` | `4` | `910` | `a1b2c3…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
 
 ---
 
-## 6. `meta_field_registry`
+### 5. `meta_field_registry`
 
-**Use:** Fields / columns per event (including new fields over time).
+**Use:** Fields / columns per event (including fields added later).
 
-| feature_id | event_name | field_path | column_name | inferred_type | is_envelope | in_events | created_at | updated_at |
-|------------|------------|------------|-------------|---------------|-------------|-----------|------------|------------|
-| `01_express_checkout` | `otp_entered` | `otp_success` | `otp_success` | `UInt8` | `false` | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `01_express_checkout` | `otp_entered` | `otp_channel` | `otp_channel` | `LowCardinality(String)` | `false` | `true` | `2026-06-10 09:00:00+00` | `2026-06-10 09:00:00+00` |
-
-*(Second row = field that appeared later; Instrumentation altered CH + Context upserted meta.)*
+| feature_id | event_name | field_path | column_name | inferred_type | is_nullable | null_rate | in_spec | in_events | created_at | updated_at |
+|------------|------------|------------|-------------|---------------|-------------|-----------|---------|-----------|------------|------------|
+| `01_express_checkout` | `otp_entered` | `otp_success` | `otp_success` | `UInt8` | `false` | `0.0` | `true` | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `01_express_checkout` | `otp_entered` | `otp_channel` | `otp_channel` | `LowCardinality(String)` | `true` | `0.12` | `false` | `true` | `2026-06-10 09:00:00+00` | `2026-06-10 09:00:00+00` |
 
 ---
 
-## 7. `context_versions`
+### 6. `meta_schema_decisions`
+
+**Use:** Why CH schema choices were made (`order_by`, `partition`, `strategy`, `type`, `mv`).
+
+| feature_id | table_name | decision_kind | decision_value | rationale | created_at | updated_at |
+|------------|------------|---------------|----------------|-----------|------------|------------|
+| `01_express_checkout` | `express_checkout_events` | `order_by` | `(timestamp, user_id, device_type)` | Queries filter by time + segment, never by `id` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `01_express_checkout` | `express_otp_stats_daily` | `mv` | `mv_express_otp_daily → express_otp_stats_daily` | Daily OTP rates for Conversation without scanning raw | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+
+---
+
+## Context layer (Context Agent → Postgres)
+
+### 7. `context_versions`
 
 **Use:** Each published version of the living context. Conversation pins insights to one version.
 
 | context_version | parent_version | source | feature_id | is_current | summary | created_at | updated_at |
 |-----------------|----------------|--------|------------|------------|---------|------------|------------|
 | `v0` | `null` | `seed` | `null` | `false` | Seeded from `base_context.md` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `v3` | `v2` | `instrumentation` | `01_express_checkout` | `true` | Express meta + OTP↔K1 link | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `v2` | `instrumentation` | `01_express_checkout` | `true` | Express meta reconciled; OTP linked to K1 | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-## 8. `context_snapshots`
+### 8. `context_snapshots`
 
 **Use:** Full JSON payload for “get latest context” in one read.
 
 | context_version | body (sketch) | created_at | updated_at |
 |-----------------|---------------|------------|------------|
 | `v0` | `{ "entities": [...], "metrics": [...], "funnels": ["pre_purchase"], "issues": ["K1"…"K7"] }` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `v3` | `{ …same…, "features": ["01_express_checkout"], "funnels": ["pre_purchase", "express_checkout"] }` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `{ …, "features": ["01_express_checkout"], "funnels": ["pre_purchase", "express_checkout"] }` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-## 9. `context_entities`
+### 9. `context_entities`
 
 **Use:** What business objects mean.
 
@@ -133,7 +139,7 @@ context_versions
 
 ---
 
-## 10. `context_metrics`
+### 10. `context_metrics`
 
 **Use:** Metric formulas, grain, and caveats.
 
@@ -144,7 +150,7 @@ context_versions
 
 ---
 
-## 11. `context_joins`
+### 11. `context_joins`
 
 **Use:** How tables link for journey analysis.
 
@@ -155,7 +161,7 @@ context_versions
 
 ---
 
-## 12. `context_funnels`
+### 12. `context_funnels`
 
 **Use:** Ordered funnel definitions (core + per feature).
 
@@ -166,7 +172,7 @@ context_versions
 
 ---
 
-## 13. `context_known_issues`
+### 13. `context_known_issues`
 
 **Use:** Product quirks Conversation should cite when interpreting numbers.
 
@@ -177,7 +183,7 @@ context_versions
 
 ---
 
-## 14. `context_contradictions`
+### 14. `context_contradictions`
 
 **Use:** Conflicting definitions — surface them; do not silently pick one.
 
@@ -188,10 +194,28 @@ context_versions
 
 ---
 
+## Flow (updated repo)
+
+```
+Instrumentation (Agno on FastAPI)
+  → ClickHouse: CREATE / load facts (+ optional MVs / aggs)
+  → Postgres: instrumentation_runs + meta_*
+
+Context (Agno on FastAPI)
+  → reads meta_*
+  → reconciles base_context
+  → writes context_versions / snapshots / entities / …
+
+Conversation (SQLTools data agent)
+  → introspects Postgres meta + context
+  → aggregates on ClickHouse
+  → PM insight citing context_version
+```
+
 ## Conversation read recipe
 
-1. Current version from `context_versions` (`is_current = true`).  
-2. Snapshot (and/or relational rows) for meaning.  
-3. `meta_*` for tables / events / fields / views.  
-4. Prefer **aggregate tables** when grain matches; else raw.  
-5. Query **ClickHouse** for aggregates only; cite `context_version` in the insight output.
+1. Current `context_versions` (`is_current = true`).  
+2. `context_snapshots` (and/or relational context rows).  
+3. `meta_*` for tables / events / fields / views / decisions.  
+4. Prefer **aggregate** tables when grain matches; else raw.  
+5. Query **ClickHouse** for aggregates only; cite `context_version` in the insight.
