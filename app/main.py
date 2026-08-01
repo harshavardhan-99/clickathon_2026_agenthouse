@@ -1,9 +1,8 @@
 """Shared FastAPI host for AgentHouse agents.
 
-Start: ``uv run uvicorn app.main:app --reload --port 8000``
-Init DB: ``uv run python -m instrumentation_agent.init_db``
+Start (clickathon venv): ``uvicorn app.main:app --reload --port 8000``
+Init DB: ``python -m instrumentation_agent.init_db``
 """
-
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -11,8 +10,9 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from conversation_agent.routes import api_router as conversation_api_router
 from instrumentation_agent.db.connection import apply_meta_registry_ddl
-from instrumentation_agent.routes import api_router
+from instrumentation_agent.routes import api_router as instrumentation_api_router
 
 
 @asynccontextmanager
@@ -31,4 +31,5 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(api_router)
+app.include_router(instrumentation_api_router)
+app.include_router(conversation_api_router)
