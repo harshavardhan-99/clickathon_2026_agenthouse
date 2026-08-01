@@ -133,6 +133,15 @@ class ExecuteResult(BaseModel):
     )
     row_count: int = Field(0, description="Number of rows returned")
     error: Optional[str] = Field(None, description="Error message if execution failed")
+    path: Optional[str] = Field(
+        None,
+        description="deterministic | llm_mcp_fallback | failed",
+    )
+    fallback_reason: Optional[str] = Field(
+        None,
+        description="Why deterministic path was skipped/failed",
+    )
+    caveats: Optional[str] = Field(None, description="Builder or LLM caveats")
 
 
 # ---------------------------------------------------------------------------
