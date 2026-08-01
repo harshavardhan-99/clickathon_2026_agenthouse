@@ -94,67 +94,72 @@ def get_latest_context_items(kinds: list[str] | None = None) -> dict[str, Any]:
 
 
 def get_feature_meta(feature_id: str) -> dict[str, Any]:
-    """Return meta objects, events (funnel order), and fields for one feature."""
+    """Return Instrumentation meta for one feature (meta_features + meta_events).
+
+    Reads tables owned by instrumentation_agent — see TABLES.md.
+    """
     if not feature_id or not feature_id.strip():
         return {"error": "feature_id is required"}
 
     feature_id = feature_id.strip()
     engine = get_registry_engine()
     with engine.connect() as conn:
-        objects = conn.execute(
+        feature = conn.execute(
             text(
                 """
-                SELECT name, feature_id, kind, engine, order_by, partition_by,
-                       source, target, purpose, created_at, updated_at
-                FROM meta_objects
+                SELECT feature_id, journey, status, spec_path, events_path,
+                       run_id, event_count, error, updated_at
+                FROM meta_features
                 WHERE feature_id = :feature_id
-                ORDER BY kind, name
                 """
             ),
             {"feature_id": feature_id},
-        ).mappings().all()
+        ).mappings().first()
 
         events = conn.execute(
             text(
                 """
-                SELECT feature_id, event_name, object_name, funnel_stage,
-                       sample_count, created_at, updated_at
+                SELECT event_name, feature_id, journey_order, ch_table,
+                       row_count, run_id, columns, registered_at
                 FROM meta_events
                 WHERE feature_id = :feature_id
-                ORDER BY funnel_stage, event_name
+                ORDER BY journey_order, event_name
                 """
             ),
             {"feature_id": feature_id},
         ).mappings().all()
 
-        fields = conn.execute(
-            text(
-                """
-                SELECT feature_id, event_name, field_path, column_name,
-                       inferred_type, null_rate, example_values,
-                       created_at, updated_at
-                FROM meta_fields
-                WHERE feature_id = :feature_id
-                ORDER BY event_name, field_path
-                """
-            ),
-            {"feature_id": feature_id},
-        ).mappings().all()
-
-        field_rows = []
-        for r in fields:
-            item = _row_to_dict(r)
-            ev = item.get("example_values")
-            if isinstance(ev, str):
+        feature_row: dict[str, Any] | None = None
+        if feature is not None:
+            feature_row = _row_to_dict(feature)
+            journey = feature_row.get("journey")
+            if isinstance(journey, str):
                 try:
-                    item["example_values"] = json.loads(ev)
+                    feature_row["journey"] = json.loads(journey)
                 except json.JSONDecodeError:
                     pass
-            field_rows.append(item)
+
+        event_rows = []
+        for r in events:
+            item = _row_to_dict(r)
+            cols = item.get("columns")
+            if isinstance(cols, str):
+                try:
+                    item["columns"] = json.loads(cols)
+                except json.JSONDecodeError:
+                    pass
+            event_rows.append(item)
+
+        if feature_row is None and not event_rows:
+            return {
+                "feature_id": feature_id,
+                "feature": None,
+                "events": [],
+                "message": "No meta_features / meta_events for this feature_id.",
+            }
 
         return {
             "feature_id": feature_id,
-            "objects": [_row_to_dict(r) for r in objects],
-            "events": [_row_to_dict(r) for r in events],
-            "fields": field_rows,
+            "feature": feature_row,
+            "events": event_rows,
         }

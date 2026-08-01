@@ -29,11 +29,11 @@ base_context.md
 * Session PostgresDb ≠ SQLTools warehouse engines ([Agno](https://docs.agno.com/use-cases/data-agents/querying-your-data))
 ```
 
-| Layer | Folder | Does |
-|-------|--------|------|
-| **Instrumentation** | [`instrumentation_agent/`](./instrumentation_agent/) | Spec + NDJSON → CH DDL/load + upsert **Postgres `meta_*`** |
-| **Context** | [`context_agent/`](./context_agent/) | Living business context; refresh on registry change; flag contradictions |
-| **Conversation** | [`conversation_agent/`](./conversation_agent/) | Agno **SQLTools** data agent → introspect → SQL → PM insights |
+| Layer | Docs | Runtime code |
+|-------|------|----------------|
+| **Instrumentation** | [`instrumentation_agent/`](./instrumentation_agent/) | `instrumentation_agent/{routes,tools,interfaces,models,utils}` |
+| **Context** | [`context_agent/`](./context_agent/) | (same pattern under `context_agent/`) |
+| **Conversation** | [`conversation_agent/`](./conversation_agent/) | (same pattern under `conversation_agent/`) |
 
 | Store | Owns |
 |-------|------|
@@ -52,19 +52,25 @@ Layer detail lives only in each folder’s `README.md` — keep this file as the
 
 ```
 clickathon_2026_agenthouse/
-├── README.md                      ← you are here (HLD + local setup)
-├── pyproject.toml                 ← uv project / dependencies
-├── .python-version                ← pinned CPython
-├── .env.example                   ← copy to .env (never commit secrets)
-├── .gitignore
-├── app/                           ← shared FastAPI + AgentOS entry (to implement)
-│   └── main.py
-├── instrumentation_agent/         ← write path (design README → code)
-├── context_agent/                 ← living context
-├── conversation_agent/            ← SQLTools data agent
-├── specs/                         ← feature briefs + events.ndjson (contest package)
-├── data/                          ← existing Parquet / DDL / load scripts
-└── .cursor/skills|rules/          ← contest skill + stack rules
+├── README.md
+├── pyproject.toml / uv.lock / .python-version
+├── .env.example
+├── app/
+│   └── main.py                    ← thin FastAPI host (mounts agent routers)
+├── instrumentation_agent/         ← full layer package
+│   ├── routes/                    ← thin FastAPI routers
+│   ├── interfaces/                ← entrypoints used by routers/tools
+│   ├── models/                    ← request/response + domain models
+│   ├── db/                        ← CRUD classes (meta_features, meta_events)
+│   ├── utils/                     ← shared helpers; ClickHouse via SQLGlot
+│   ├── tools/                     ← Agno Toolkits
+│   ├── sql/
+│   ├── settings.py
+│   └── init_db.py
+├── context_agent/                 ← layer design (+ code later)
+├── conversation_agent/            ← layer design (+ code later)
+├── tests/
+└── .cursor/skills|rules/
 ```
 
 ---
@@ -120,6 +126,9 @@ uv run pytest
 # after code exists — start the FastAPI + Agno host
 uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
+# bootstrap Postgres meta tables
+uv run python -m instrumentation_agent.init_db
+
 # add a dependency later
 uv add <package>
 uv add --group dev <package>
@@ -145,9 +154,9 @@ Re-run **`uv sync`** after pulling when `pyproject.toml` / `uv.lock` change.
 
 ## 5. Build order
 
-1. Postgres `meta_*` + Instrumentation write path  
-2. Shared `app/` FastAPI + AgentOS hosting Instrumentation  
-3. Context agent on the same app  
+1. Postgres `meta_*` + Instrumentation write path (`instrumentation_agent/`)  
+2. Thin `app/main.py` FastAPI host + AgentOS for Instrumentation  
+3. Context agent package (same layout)  
 4. Conversation SQLTools data agent  
 5. Specs 01–05 E2E → Day-2 unseen sixth spec  
 

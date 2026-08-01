@@ -9,29 +9,32 @@ Parent overview: [`../README.md`](../README.md) · Table design: [`TABLES.md`](.
 ## Role
 
 ```
-Instrumentation writes meta_* → Postgres
-Context logic publishes context_* → Postgres
+Instrumentation writes meta_features / meta_events → Postgres
+Context publishes context_versions / context_items → Postgres
         │
         ▼
-  get_latest_context_items()   → meaning
-  get_feature_meta(feature_id) → events + fields (+ objects)
+  get_latest_context_items()   → meaning (context_*)
+  get_feature_meta(feature_id) → journey + events (meta_*)
+  publish_context_version(...) → new context version (copy-forward + deltas)
         │
         ▼
   Imported by Conversation (or any Agno agent) as tools
 ```
 
-## The 2 tools
+## The 3 tools
 
 | Tool | Purpose |
 |------|---------|
 | `get_latest_context_items` | Current `context_version` + `context_items` |
-| `get_feature_meta(feature_id)` | `meta_objects` + `meta_events` + `meta_fields` |
+| `get_feature_meta(feature_id)` | `meta_features` + `meta_events` (Instrumentation) |
+| `publish_context_version` | New version: copy-forward + upserts/deletes |
 
 ```python
 from context_agent import (
     get_context_catalog_tools,  # Agno Toolkit for another agent
     get_latest_context_items,   # direct call
     get_feature_meta,
+    publish_context_version,
 )
 
 # Inside Conversation / other agent:
@@ -40,13 +43,26 @@ tools = [get_context_catalog_tools()]
 # Or without Agno:
 bundle = get_latest_context_items()
 meta = get_feature_meta("01_express_checkout")
+publish_context_version(
+    context_version="v1",
+    source="seed",
+    summary="Bootstrap from base context",
+    upserts=[
+        {
+            "kind": "entity",
+            "item_key": "user",
+            "label": "Traveller",
+            "payload": {"primary_id_field": "user_id"},
+        }
+    ],
+)
 ```
 
 `get_postgres_sql_tools()` is optional admin/debug only.
 
 ## Postgres tables
 
-See [`TABLES.md`](./TABLES.md).
+See [`TABLES.md`](./TABLES.md). Context DDL is only `context_*`; meta DDL lives under Instrumentation.
 
 ## Environment
 
@@ -62,6 +78,9 @@ DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME
 
 ```bash
 uv sync
+# Meta tables (Instrumentation):
+uv run python -m instrumentation_agent.init_db
+# Context tables (this package):
 uv run python context_agent/scripts/init_schema.py
 
 # Optional health check service (no agent):

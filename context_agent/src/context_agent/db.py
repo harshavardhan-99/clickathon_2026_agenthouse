@@ -24,7 +24,7 @@ def get_registry_engine() -> Engine:
 
 @lru_cache
 def get_writable_engine() -> Engine:
-    """Writable engine for DDL / admin (init_schema only)."""
+    """Writable engine for DDL (init_schema) and publish_context_version."""
     settings = get_settings()
     return create_engine(settings.database_url, pool_pre_ping=True)
 
