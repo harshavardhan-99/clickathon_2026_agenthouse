@@ -1,0 +1,48 @@
+---
+description: Click-a-thon 2026 AgentHouse stack orientation — read first in every session
+alwaysApply: true
+---
+
+# Click-a-thon 2026 · Atlys AgentHouse
+
+Hackathon: build an **agentic analytics system on ClickHouse** that turns a feature spec into schemas, insights, and an up-to-date business context layer — all **Langfuse-traced**.
+
+## Canonical docs (read before inventing)
+
+| File | Purpose |
+|------|---------|
+| `problem_statement.md` | Challenge, deliverables, judging |
+| `readme_start_here.md` | Package map + load steps |
+| `base_context.md` | Business entities, metrics, known issues (intentionally imperfect) |
+| `data/instrumentation_notes.md` | What the 8 existing tables emit |
+| `data/ddl.sql` | Current production schemas |
+| `specs/*/spec.md` | 5 feature briefs (no schemas) |
+| `specs/*/events.ndjson` | Raw events for each feature |
+
+For the full agent workflow, follow the project skill **clickathon-agenthouse**.
+
+## Stack facts
+
+- **Primary DB:** ClickHouse Cloud (team's own service). Load via `data/load.sh`.
+- **Existing data:** 8 raw event tables (Parquet + DDL). Funnel:
+  `destination_card_clicked → application_started → document_uploaded → purchase_completed`
+  Supporting: `search_typed`, `landing_page_scrolled`, `auth_completed`, `pay_now_clicked`.
+- **New features:** `specs/01`–`05` — product brief + NDJSON only. Instrumentation Agent designs tables.
+- **Day 2:** unseen 6th spec — pipeline output + trace required. Build for generalization.
+- **Parquet via Git LFS:** if files are ~133B pointers, run `git lfs pull` before load.
+- **Out of scope:** auth, prod deploy, streaming ingest, polished frontends.
+- **LLM tip:** aggregate in ClickHouse; interpret aggregates — don't dump raw rows into the model.
+
+## Deliverables to build
+
+1. Instrumentation Agent — spec → optimal ClickHouse DDL (types, ORDER BY, partition, TTL, MVs)
+2. Analytics Agent — queries + context → PM-actionable insights
+3. Context Agent — living context layer; update on schema change; flag contradictions
+4. Tracing (Langfuse) + viz (schema changelog, insights + confidence, context diffs)
+
+## Hard constraints
+
+- ClickHouse is the primary datastore; schemas must be columnar-optimized.
+- Do **not** copy the legacy `ORDER BY (id, timestamp, user_id)` for new tables — queries filter by time/segment, never by `id`.
+- Treat `base_context.md` as suspect (metric conflicts, naming drift vs DDL are part of the challenge).
+- Every agent decision must be traceable in Langfuse.
