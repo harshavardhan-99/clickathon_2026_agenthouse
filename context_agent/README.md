@@ -82,10 +82,15 @@ uv sync
 uv run python -m instrumentation_agent.init_db
 # Context tables (this package):
 uv run python context_agent/scripts/init_schema.py
+# Seed living context (entities, metrics, core funnel_steps):
+uv run python context_agent/scripts/seed_v0.py
 
 # Optional health check service (no agent):
 PYTHONPATH=context_agent/src uv run uvicorn context_agent.app:app --reload --port 8001
 ```
+
+Without `seed_v0`, `get_latest_context_items` returns empty and Conversation
+`discover_schema` cannot invent schema (empty SchemaContext + notes).
 
 ## Related
 

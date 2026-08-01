@@ -89,10 +89,6 @@ WORKFLOW_ID = _env("WORKFLOW_ID", "visualization-agent")
 
 # Workflow artifact paths (relative to conversation_agent/ unless absolute)
 _CA_DIR = Path(__file__).resolve().parent
-SCHEMA_CONTEXT_PATH = _env(
-    "SCHEMA_CONTEXT_PATH",
-    str(_CA_DIR / "context" / "schema_context.md"),
-)
 GENERATE_QUERY_SKILL_PATH = _env(
     "GENERATE_QUERY_SKILL_PATH",
     str(_CA_DIR / "skills" / "generate_query.md"),
