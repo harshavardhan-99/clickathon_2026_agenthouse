@@ -53,6 +53,7 @@ STEP_LABELS = {
     "discover_schema": "Discovering relevant schema",
     "pack_for_plan_visualization": "Packing question + schema for planner",
     "plan_visualization": "Planning visualization",
+    "run_analytics": "Running analytics (template SQL / LLM+MCP fallback)",
     "generate_query": "Generating ClickHouse SQL",
     "execute": "Executing query via ClickHouse MCP",
 }

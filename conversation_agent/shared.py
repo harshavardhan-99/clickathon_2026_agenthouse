@@ -22,6 +22,7 @@ WORKFLOW_STEP_NAMES = (
     "discover_schema",
     "pack_for_plan_visualization",
     "plan_visualization",
+    "run_analytics",
     "generate_query",
     "execute",
 )
