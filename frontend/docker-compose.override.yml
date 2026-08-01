@@ -1,0 +1,10 @@
+# Required on Apple Silicon (M-series) — default MongoDB image needs AVX
+services:
+  mongodb:
+    image: mongo:4.4.18
+
+  api:
+    volumes:
+      - type: bind
+        source: ./librechat.yaml
+        target: /app/librechat.yaml

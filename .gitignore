@@ -134,11 +134,7 @@ codedb.snapshot
 /frontend/dump.rdb
 /frontend/test-image*
 
-# Local config (keep *.example committed)
-/frontend/librechat.yaml
-/frontend/librechat.yml
-/frontend/docker-compose.override.yaml
-/frontend/docker-compose.override.yml
+# Local config (librechat.yaml + docker-compose.override.yml are committed for AgentHouse)
 /frontend/cache.json
 /frontend/auth.json
 /frontend/owner.yml
