@@ -67,7 +67,7 @@ SESSION_DATABASE_URL = _env("SESSION_DATABASE_URL")
 AGENTOS_ID = _env("AGENTOS_ID", "clickathon-visualization")
 AGENTOS_DESCRIPTION = _env(
     "AGENTOS_DESCRIPTION",
-    "NL → ClickHouse MCP → AnalyticsResponse blocks",
+    "NL → schema → viz plan → SQL → ClickHouse MCP execute",
 )
 AGENTOS_HOST = _env("AGENTOS_HOST", "0.0.0.0")
 AGENTOS_PORT = _env_int("AGENTOS_PORT", 7777)
@@ -80,6 +80,18 @@ AGENTOS_CORS_ORIGINS = [
 AGENT_ID = _env("AGENT_ID", "visualization-agent")
 AGENT_NAME = _env("AGENT_NAME", "Visualization Agent")
 AGENT_HISTORY_RUNS = _env_int("AGENT_HISTORY_RUNS", 3)
+WORKFLOW_ID = _env("WORKFLOW_ID", "visualization-agent")
+
+# Workflow artifact paths (relative to conversation_agent/ unless absolute)
+_CA_DIR = Path(__file__).resolve().parent
+SCHEMA_CONTEXT_PATH = _env(
+    "SCHEMA_CONTEXT_PATH",
+    str(_CA_DIR / "context" / "schema_context.md"),
+)
+GENERATE_QUERY_SKILL_PATH = _env(
+    "GENERATE_QUERY_SKILL_PATH",
+    str(_CA_DIR / "skills" / "generate_query.md"),
+)
 
 DEFAULT_PROMPT = (
     "Show purchase conversion by device_type for the last 30 days "

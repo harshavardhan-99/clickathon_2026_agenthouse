@@ -1,0 +1,237 @@
+"""Shared helpers for the Visualization Agent workflow (not the unused _old agent)."""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+from pathlib import Path
+from typing import Any, Optional
+
+from agno.tools.mcp import MCPTools
+
+from conversation_agent import config
+
+_DIR = Path(__file__).resolve().parent
+_langfuse_ready = False
+MCP_RUN_QUERY_TOOL = "run_query"
+
+
+def resolve_path(path: str) -> Path:
+    p = Path(path)
+    return p if p.is_absolute() else (_DIR / p)
+
+
+def load_text_file(path: str, *, label: str) -> str:
+    """Load a context/skill file; raise if missing so misconfig is obvious."""
+    file_path = resolve_path(path)
+    if not file_path.is_file():
+        raise RuntimeError(
+            f"Missing {label} at {file_path}. "
+            f"Set the path in conversation_agent/config.py or provide the file."
+        )
+    return file_path.read_text(encoding="utf-8")
+
+
+def build_model() -> Any:
+    provider = config.MODEL_PROVIDER.strip().lower()
+    if provider in ("claude", "anthropic"):
+        from agno.models.anthropic import Claude
+
+        if config.ANTHROPIC_API_KEY:
+            os.environ["ANTHROPIC_API_KEY"] = config.ANTHROPIC_API_KEY
+        elif not os.environ.get("ANTHROPIC_API_KEY"):
+            raise RuntimeError("Set ANTHROPIC_API_KEY in conversation_agent/config.py")
+        return Claude(
+            id=config.MODEL_ID,
+            api_key=config.ANTHROPIC_API_KEY or None,
+        )
+
+    if provider == "gemini":
+        from agno.models.google import Gemini
+
+        if config.GOOGLE_API_KEY:
+            os.environ["GOOGLE_API_KEY"] = config.GOOGLE_API_KEY
+        elif not os.environ.get("GOOGLE_API_KEY"):
+            raise RuntimeError("Set GOOGLE_API_KEY in conversation_agent/config.py")
+        return Gemini(id=config.MODEL_ID, api_key=config.GOOGLE_API_KEY or None)
+
+    if provider == "openai":
+        from agno.models.openai import OpenAIChat
+
+        if config.OPENAI_API_KEY:
+            os.environ["OPENAI_API_KEY"] = config.OPENAI_API_KEY
+        elif not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError("Set OPENAI_API_KEY in conversation_agent/config.py")
+        return OpenAIChat(id=config.MODEL_ID)
+
+    raise RuntimeError(
+        f"Unknown MODEL_PROVIDER={config.MODEL_PROVIDER!r}; "
+        "use 'claude', 'gemini', or 'openai'"
+    )
+
+
+def model_trace_labels() -> dict[str, str]:
+    provider = config.MODEL_PROVIDER.strip().lower()
+    if provider == "anthropic":
+        provider = "claude"
+    model_id = config.MODEL_ID
+    return {
+        "model_provider": provider,
+        "model_id": model_id,
+        "model": f"{provider}:{model_id}",
+    }
+
+
+def setup_langfuse() -> None:
+    """Instrument Agno → OpenTelemetry → Langfuse (idempotent)."""
+    global _langfuse_ready
+    if _langfuse_ready or not getattr(config, "LANGFUSE_ENABLED", True):
+        return
+    if not config.LANGFUSE_PUBLIC_KEY or not config.LANGFUSE_SECRET_KEY:
+        raise RuntimeError(
+            "Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY in conversation_agent/config.py"
+        )
+
+    from openinference.instrumentation.agno import AgnoInstrumentor
+    from opentelemetry import trace as trace_api
+    from opentelemetry.context import Context
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.trace import ReadableSpan, Span, SpanProcessor, TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+    labels = model_trace_labels()
+    llm_system = {
+        "claude": "anthropic",
+        "gemini": "google",
+        "openai": "openai",
+    }.get(labels["model_provider"], labels["model_provider"])
+
+    class ModelMetadataSpanProcessor(SpanProcessor):
+        def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+            span.set_attribute("langfuse.trace.metadata.model_provider", labels["model_provider"])
+            span.set_attribute("langfuse.trace.metadata.model_id", labels["model_id"])
+            span.set_attribute("langfuse.trace.metadata.model", labels["model"])
+            span.set_attribute(
+                "langfuse.observation.metadata.model_provider", labels["model_provider"]
+            )
+            span.set_attribute(
+                "langfuse.observation.metadata.model_id", labels["model_id"]
+            )
+            span.set_attribute("langfuse.observation.metadata.model", labels["model"])
+            span.set_attribute("langfuse.observation.model.name", labels["model_id"])
+            span.set_attribute("llm.model_name", labels["model_id"])
+            span.set_attribute("llm.system", llm_system)
+            span.set_attribute(
+                "langfuse.trace.tags",
+                [labels["model_provider"], labels["model_id"], labels["model"]],
+            )
+
+        def on_end(self, span: ReadableSpan) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return True
+
+    os.environ["LANGFUSE_PUBLIC_KEY"] = config.LANGFUSE_PUBLIC_KEY
+    os.environ["LANGFUSE_SECRET_KEY"] = config.LANGFUSE_SECRET_KEY
+    os.environ["LANGFUSE_HOST"] = config.LANGFUSE_BASE_URL
+    os.environ["LANGFUSE_BASE_URL"] = config.LANGFUSE_BASE_URL
+
+    auth = base64.b64encode(
+        f"{config.LANGFUSE_PUBLIC_KEY}:{config.LANGFUSE_SECRET_KEY}".encode()
+    ).decode()
+    base = config.LANGFUSE_BASE_URL.rstrip("/")
+    os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"{base}/api/public/otel"
+    os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {auth}"
+
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(ModelMetadataSpanProcessor())
+    tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
+    trace_api.set_tracer_provider(tracer_provider=tracer_provider)
+    AgnoInstrumentor().instrument()
+    _langfuse_ready = True
+
+
+def clickhouse_mcp_env() -> dict[str, str]:
+    if not config.CLICKHOUSE_HOST or not config.CLICKHOUSE_USER:
+        raise RuntimeError(
+            "Set CLICKHOUSE_HOST and CLICKHOUSE_USER in conversation_agent/config.py"
+        )
+    env = {
+        "CLICKHOUSE_HOST": config.CLICKHOUSE_HOST,
+        "CLICKHOUSE_PORT": str(config.CLICKHOUSE_PORT),
+        "CLICKHOUSE_USER": config.CLICKHOUSE_USER,
+        "CLICKHOUSE_PASSWORD": config.CLICKHOUSE_PASSWORD,
+        "CLICKHOUSE_SECURE": "true" if config.CLICKHOUSE_SECURE else "false",
+        "CLICKHOUSE_VERIFY": "true" if config.CLICKHOUSE_VERIFY else "false",
+        "CLICKHOUSE_CONNECT_TIMEOUT": str(config.CLICKHOUSE_CONNECT_TIMEOUT),
+        "CLICKHOUSE_SEND_RECEIVE_TIMEOUT": str(config.CLICKHOUSE_SEND_RECEIVE_TIMEOUT),
+    }
+    if path := os.environ.get("PATH"):
+        env["PATH"] = path
+    return env
+
+
+def build_mcp_tools(
+    *,
+    refresh_connection: bool = False,
+    include_tools: list[str] | None = None,
+) -> MCPTools:
+    kwargs: dict[str, Any] = {
+        "command": config.CLICKHOUSE_MCP_COMMAND,
+        "env": clickhouse_mcp_env(),
+        "timeout_seconds": config.CLICKHOUSE_MCP_TIMEOUT_SECONDS,
+        "refresh_connection": refresh_connection,
+    }
+    if include_tools is not None:
+        kwargs["include_tools"] = include_tools
+    return MCPTools(**kwargs)
+
+
+def _parse_mcp_query_payload(raw: str) -> tuple[list[str], list[list[Any]]]:
+    data = json.loads(raw)
+    if isinstance(data, dict) and data.get("status") == "error":
+        raise RuntimeError(str(data.get("message") or data))
+    if not isinstance(data, dict) or "columns" not in data or "rows" not in data:
+        raise RuntimeError(f"Unexpected MCP run_query payload: {raw[:500]}")
+    columns = list(data["columns"])
+    rows = [list(row) for row in data["rows"]]
+    return columns, rows
+
+
+async def run_query_via_mcp(
+    sql: str,
+    *,
+    mcp_tools: Optional[MCPTools] = None,
+) -> tuple[list[str], list[list[Any]]]:
+    """Execute one query via ClickHouse MCP `run_query`; return (columns, rows)."""
+
+    async def _call(mcp: MCPTools) -> tuple[list[str], list[list[Any]]]:
+        if not getattr(mcp, "_initialized", False):
+            await mcp.connect()
+        if mcp.session is None:
+            raise RuntimeError("ClickHouse MCP session is not connected")
+
+        result = await mcp.session.call_tool(MCP_RUN_QUERY_TOOL, {"query": sql})
+        if result.isError:
+            raise RuntimeError(f"MCP {MCP_RUN_QUERY_TOOL} error: {result.content}")
+
+        chunks: list[str] = []
+        for item in result.content or []:
+            text = getattr(item, "text", None)
+            if text:
+                chunks.append(text)
+        raw = "\n".join(chunks).strip()
+        if not raw:
+            raise RuntimeError(f"MCP {MCP_RUN_QUERY_TOOL} returned empty content")
+        return _parse_mcp_query_payload(raw)
+
+    if mcp_tools is not None:
+        return await _call(mcp_tools)
+
+    async with build_mcp_tools() as mcp:
+        return await _call(mcp)
