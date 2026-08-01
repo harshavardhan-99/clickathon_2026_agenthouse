@@ -1,1 +1,1 @@
-"""Click-a-thon AgentHouse shared FastAPI application package."""
+"""Click-a-thon AgentHouse FastAPI host package."""

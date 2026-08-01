@@ -1,26 +1,42 @@
-"""Shared FastAPI + Agno AgentOS host (scaffold).
+"""Shared FastAPI host for AgentHouse agents.
 
-Wire Instrumentation / Context / Conversation agents here as they land.
-Start locally: ``uv run uvicorn app.main:app --reload --port 8000``
+Start: ``uv run uvicorn app.main:app --reload --port 8000``
+Init DB: ``uv run python -m instrumentation_agent.init_db``
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 from fastapi import FastAPI
+
+from instrumentation_agent.routes import api_router
+from instrumentation_agent.utils.postgres import apply_meta_registry_ddl
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    try:
+        apply_meta_registry_ddl()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[startup] meta registry DDL skipped: {exc}")
+    yield
+
 
 app = FastAPI(
     title="Click-a-thon AgentHouse",
     version="0.1.0",
     description="FastAPI host for Agno AgentOS agents (Instrumentation, Context, Conversation).",
+    lifespan=lifespan,
 )
 
+app.include_router(api_router)
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-# When agents exist:
+# When ready:
+# from agno.agent import Agent
 # from agno.os import AgentOS
-# agent_os = AgentOS(id="agenthouse", agents=[...], base_app=app)
+# from instrumentation_agent.tools.instrumentation import InstrumentationTools
+# instrumentation_agent = Agent(name="Instrumentation", tools=[InstrumentationTools()])
+# agent_os = AgentOS(id="agenthouse", agents=[instrumentation_agent], base_app=app)
 # app = agent_os.get_app()
