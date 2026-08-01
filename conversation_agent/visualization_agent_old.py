@@ -256,6 +256,7 @@ def setup_langfuse() -> None:
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
     labels = model_trace_labels()
+    environment = getattr(config, "LANGFUSE_TRACING_ENVIRONMENT", None) or "agno-dev"
     llm_system = {
         "claude": "anthropic",
         "gemini": "google",
@@ -263,9 +264,12 @@ def setup_langfuse() -> None:
     }.get(labels["model_provider"], labels["model_provider"])
 
     class ModelMetadataSpanProcessor(SpanProcessor):
-        """Stamp model_provider / model_id on every span for Langfuse filters."""
+        """Stamp environment + model labels on every span for Langfuse filters."""
 
         def on_start(self, span: Span, parent_context: Context | None = None) -> None:
+            span.set_attribute("langfuse.environment", environment)
+            span.set_attribute("deployment.environment", environment)
+            span.set_attribute("deployment.environment.name", environment)
             span.set_attribute("langfuse.trace.metadata.model_provider", labels["model_provider"])
             span.set_attribute("langfuse.trace.metadata.model_id", labels["model_id"])
             span.set_attribute("langfuse.trace.metadata.model", labels["model"])
@@ -281,11 +285,35 @@ def setup_langfuse() -> None:
             span.set_attribute("langfuse.observation.model.name", labels["model_id"])
             span.set_attribute("llm.model_name", labels["model_id"])
             span.set_attribute("llm.system", llm_system)
-            # Tags are filterable dimensions in the Langfuse UI
-            span.set_attribute(
-                "langfuse.trace.tags",
-                [labels["model_provider"], labels["model_id"], labels["model"]],
-            )
+            step = None
+            # Best-effort: parse step from span name / attributes (mirrors shared.py)
+            blobs = [str(getattr(span, "name", "") or "")]
+            for key, value in (getattr(span, "attributes", None) or {}).items():
+                blobs.append(f"{key}={value}")
+            hay = " ".join(blobs).lower().replace("-", "_")
+            for candidate in (
+                "discover_schema",
+                "pack_for_plan_visualization",
+                "plan_visualization",
+                "generate_query",
+                "execute",
+                "legacy",
+            ):
+                if candidate in hay:
+                    step = candidate
+                    break
+            tags = [
+                environment,
+                "agno",
+                labels["model_provider"],
+                labels["model_id"],
+                labels["model"],
+            ]
+            if step:
+                tags.extend([step, f"step:{step}"])
+                span.set_attribute("langfuse.observation.metadata.step", step)
+                span.set_attribute("langfuse.trace.metadata.step", step)
+            span.set_attribute("langfuse.trace.tags", tags)
 
         def on_end(self, span: ReadableSpan) -> None:
             return None
@@ -300,6 +328,8 @@ def setup_langfuse() -> None:
     os.environ["LANGFUSE_SECRET_KEY"] = config.LANGFUSE_SECRET_KEY
     os.environ["LANGFUSE_HOST"] = config.LANGFUSE_BASE_URL
     os.environ["LANGFUSE_BASE_URL"] = config.LANGFUSE_BASE_URL
+    os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = environment
+    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = f"langfuse.environment={environment}"
 
     auth = base64.b64encode(
         f"{config.LANGFUSE_PUBLIC_KEY}:{config.LANGFUSE_SECRET_KEY}".encode()
@@ -308,7 +338,18 @@ def setup_langfuse() -> None:
     os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"{base}/api/public/otel"
     os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {auth}"
 
-    tracer_provider = TracerProvider()
+    from opentelemetry.sdk.resources import Resource
+
+    tracer_provider = TracerProvider(
+        resource=Resource.create(
+            {
+                "langfuse.environment": environment,
+                "deployment.environment": environment,
+                "deployment.environment.name": environment,
+                "service.name": "clickathon-visualization-agent-legacy",
+            }
+        )
+    )
     tracer_provider.add_span_processor(ModelMetadataSpanProcessor())
     tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
     trace_api.set_tracer_provider(tracer_provider=tracer_provider)
@@ -341,6 +382,11 @@ def build_agent(
             "model_provider": labels["model_provider"],
             "model_id": labels["model_id"],
             "model": labels["model"],
+            "step": "legacy",
+            "langfuse_environment": getattr(
+                config, "LANGFUSE_TRACING_ENVIRONMENT", None
+            )
+            or "agno-dev",
         },
     )
 

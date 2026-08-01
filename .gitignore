@@ -34,3 +34,5 @@ build/
 conversation_agent/tmp/
 out/
 *.log
+
+uv.lock

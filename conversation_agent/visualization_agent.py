@@ -1,8 +1,10 @@
-"""Visualization Agent workflow: schema → viz plan → SQL → execute.
+"""Visualization Agent workflow: schema → viz plan → run_analytics.
 
 Modes:
     CLI (default):  one-shot prompt → print ExecuteResult JSON
     AgentOS:        FastAPI surface (connect via os.agno.com)
+
+Analytics: template SQL + clickhouse-connect; fallback LLM generate_query + MCP.
 
 Run (CLI):
     python -m conversation_agent.visualization_agent
@@ -31,9 +33,8 @@ from conversation_agent import config
 from conversation_agent.shared import build_mcp_tools, setup_langfuse
 from conversation_agent.steps import (
     discover_schema,
-    execute,
-    generate_query,
     plan_visualization,
+    run_analytics,
 )
 from conversation_agent.steps.glue import pack_for_plan_visualization
 
@@ -50,7 +51,7 @@ def build_visualization_workflow(
     db: Any = None,
     mcp_tools: MCPTools | None = None,
 ) -> Workflow:
-    """Assemble the Visualization Agent workflow (four steps + glue)."""
+    """Assemble the Visualization Agent workflow (schema → plan → analytics)."""
     setup_langfuse()
     return Workflow(
         id=config.WORKFLOW_ID,
@@ -65,8 +66,7 @@ def build_visualization_workflow(
                 executor=pack_for_plan_visualization,
             ),
             plan_visualization.build_step(db=db),
-            generate_query.build_step(db=db),
-            execute.build_step(mcp_tools=mcp_tools),
+            run_analytics.build_step(mcp_tools=mcp_tools),
         ],
     )
 
@@ -88,11 +88,17 @@ def _content_to_dict(content: Any) -> dict[str, Any]:
 
 
 async def run_visualization_workflow(prompt: str) -> dict[str, Any]:
-    """One-shot CLI path: MCP session for execute, then run the workflow."""
-    async with build_mcp_tools() as mcp_tools:
-        workflow = build_visualization_workflow(mcp_tools=mcp_tools)
+    """CLI path: prefer direct CH analytics; attach MCP when available for fallback."""
+    try:
+        async with build_mcp_tools() as mcp_tools:
+            workflow = build_visualization_workflow(mcp_tools=mcp_tools)
+            run = await workflow.arun(prompt)
+            return _content_to_dict(run.content)
+    except Exception as mcp_exc:  # noqa: BLE001
+        print(f"[CLI] MCP unavailable ({mcp_exc}); running without MCP fallback")
+        workflow = build_visualization_workflow(mcp_tools=None)
         run = await workflow.arun(prompt)
-    return _content_to_dict(run.content)
+        return _content_to_dict(run.content)
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +116,7 @@ LEGACY_AGENT_NAME = "Visualization Agent (legacy)"
 
 
 def bootstrap_agent_os() -> None:
-    """Build AgentOS with workflow + legacy MCP agent (idempotent)."""
+    """Build AgentOS with workflow (+ optional legacy MCP agent)."""
     global agent_os, app, visualization_workflow, visualization_agent_legacy
     global _agent_os_init_error
 
@@ -118,33 +124,43 @@ def bootstrap_agent_os() -> None:
         return
     if AgentOS is None or SqliteDb is None:
         raise RuntimeError(
-            "AgentOS not available. Install with: pip install -U 'agno[os]'"
+            "AgentOS not available. Install with: uv add 'agno[os]'   "
+            "(or: uv pip install 'agno[os]')"
         )
 
     try:
-        from conversation_agent.visualization_agent_old import (
-            build_agent as build_legacy_agent,
-        )
-
         db_path = Path(__file__).resolve().parent / config.AGENTOS_DB_PATH
         db_path.parent.mkdir(parents=True, exist_ok=True)
         os_db = SqliteDb(db_file=str(db_path))
-        # Full MCP toolset for legacy agent; execute step uses run_query from same session
-        os_mcp_tools = build_mcp_tools(refresh_connection=True)
+
+        os_mcp_tools = None
+        agents: list[Any] = []
+        try:
+            from conversation_agent.visualization_agent_old import (
+                build_agent as build_legacy_agent,
+            )
+
+            # Full MCP toolset for legacy agent; execute step uses run_query
+            os_mcp_tools = build_mcp_tools(refresh_connection=True)
+            visualization_agent_legacy = build_legacy_agent(
+                os_mcp_tools,
+                db=os_db,
+                agent_id=LEGACY_AGENT_ID,
+                agent_name=LEGACY_AGENT_NAME,
+            )
+            agents.append(visualization_agent_legacy)
+        except Exception as mcp_exc:  # noqa: BLE001
+            print(f"[AgentOS] legacy MCP agent skipped: {mcp_exc}")
+            visualization_agent_legacy = None
+
         visualization_workflow = build_visualization_workflow(
             db=os_db,
             mcp_tools=os_mcp_tools,
         )
-        visualization_agent_legacy = build_legacy_agent(
-            os_mcp_tools,
-            db=os_db,
-            agent_id=LEGACY_AGENT_ID,
-            agent_name=LEGACY_AGENT_NAME,
-        )
         agent_os = AgentOS(
             id=config.AGENTOS_ID,
             description=config.AGENTOS_DESCRIPTION,
-            agents=[visualization_agent_legacy],
+            agents=agents,
             workflows=[visualization_workflow],
             db=os_db,
             cors_allowed_origins=list(config.AGENTOS_CORS_ORIGINS),
