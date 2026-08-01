@@ -1,221 +1,185 @@
-# Context Agent — Postgres tables
+# Context Agent — Postgres tables (simple)
 
-Catalog for the **living context layer** and the **metadata registry** it consumes.  
-All tables below live in **Postgres**. ClickHouse holds event facts / MVs / aggregates; Postgres only describes them and stores business meaning.
+**Goal:** few tables, clear ownership, fast reads — **no JSON columns**.
 
-Aligned with the updated AgentHouse design ([`../README.md`](../README.md), [`../instrumentation_agent/README.md`](../instrumentation_agent/README.md)):
+| Store | Owns |
+|-------|------|
+| **ClickHouse** | Event data, aggregates, MVs |
+| **Postgres** | What exists (meta) + what it means (context) |
 
 | Writer | Tables |
 |--------|--------|
-| **Instrumentation** | `instrumentation_runs`, `meta_*` |
-| **Context** | `context_*` (reads `meta_*`, publishes versions) |
-| **Conversation** | read-only on both |
+| Instrumentation | `instrumentation_runs`, `meta_objects`, `meta_events`, `meta_fields` |
+| Context | `context_versions` + relational context tables |
+| Conversation | read-only |
 
-**Common columns:** every table includes `created_at` and `updated_at` (`TIMESTAMPTZ`).  
-No `langfuse_trace_id` columns (tracing stays in Langfuse, not the registry).
+**Common columns on every table:** `created_at`, `updated_at` (`TIMESTAMPTZ`).  
+No `langfuse_trace_id`. No JSON / JSONB.
 
 ```
 instrumentation_runs
-meta_table_registry          (raw + aggregate CH tables)
-meta_view_registry           (materialized + normal views)
-meta_event_registry
- └── meta_field_registry
-meta_schema_decisions
+meta_objects
+meta_events
+ └── meta_fields
 
-context_versions
- ├── context_snapshots
+context_versions          ← is_current pointer
  ├── context_entities
  ├── context_metrics
  ├── context_joins
  ├── context_funnels
+ │    └── context_funnel_steps
  ├── context_known_issues
  └── context_contradictions
 ```
 
 ---
 
-## Meta registry (Instrumentation → Postgres)
+## Meta (Instrumentation)
 
 ### 1. `instrumentation_runs`
 
-**Use:** One pipeline run per feature instrumentation (idempotency / audit).
+**Use:** Audit each Instrumentation run.
 
-| id | feature_id | strategy | strategy_rationale | context_version | created_at | updated_at |
-|----|------------|----------|--------------------|-----------------|------------|------------|
-| `a1b2c3…` | `01_express_checkout` | `one_table_per_event` | Events differ enough to stay separate | `v3` | `2026-06-08 12:00:00+00` | `2026-06-08 12:01:00+00` |
-| `d4e5f6…` | `01_express_checkout` | `one_table_per_event` | Re-run after new field `otp_channel` | `v4` | `2026-06-10 09:00:00+00` | `2026-06-10 09:01:00+00` |
-
----
-
-### 2. `meta_table_registry`
-
-**Use:** ClickHouse objects that **store data** (raw event tables + aggregate / rollup tables).
-
-| table_name | feature_id | object_kind | engine | order_by | partition_by | grain | stores_data | created_at | updated_at |
-|------------|------------|-------------|--------|----------|--------------|-------|-------------|------------|------------|
-| `express_checkout_events` | `01_express_checkout` | `raw` | `MergeTree` | `(timestamp, user_id, device_type)` | `toYYYYMM(timestamp)` | event row | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `express_otp_stats_daily` | `01_express_checkout` | `aggregate` | `SummingMergeTree` | `(day, device_type, destination)` | `toYYYYMM(day)` | day × device × destination | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| id | feature_id | strategy | notes | created_at | updated_at |
+|----|------------|----------|-------|------------|------------|
+| `a1b2…` | `01_express_checkout` | `one_table_per_event` | Initial instrument | `2026-06-08 12:00:00+00` | `2026-06-08 12:01:00+00` |
+| `d4e5…` | `01_express_checkout` | `one_table_per_event` | Added field `otp_channel` | `2026-06-10 09:00:00+00` | `2026-06-10 09:01:00+00` |
 
 ---
 
-### 3. `meta_view_registry`
+### 2. `meta_objects`
 
-**Use:** Materialized views (pipe into a target table) and normal views (saved SQL, no storage).
+**Use:** All ClickHouse objects in one catalog (`raw` / `aggregate` / `mv` / `view`).
 
-| view_name | view_type | source_tables | target_table | stores_data | purpose | created_at | updated_at |
-|-----------|-----------|---------------|--------------|-------------|---------|------------|------------|
-| `mv_express_otp_daily` | `materialized_view` | `{express_checkout_events}` | `express_otp_stats_daily` | `false` | On insert, roll OTP stats into daily agg | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `v_express_checkout_funnel` | `view` | `{express_checkout_events}` | `null` | `false` | Convenience SELECT for Express stages | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| name | feature_id | kind | engine | order_by | partition_by | source | target | grain | purpose | created_at | updated_at |
+|------|------------|------|--------|----------|--------------|--------|--------|-------|---------|------------|------------|
+| `express_checkout_events` | `01_express_checkout` | `raw` | `MergeTree` | `(timestamp, user_id, device_type)` | `toYYYYMM(timestamp)` | | | event | Raw Express events | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `express_otp_stats_daily` | `01_express_checkout` | `aggregate` | `SummingMergeTree` | `(day, device_type, destination)` | `toYYYYMM(day)` | | | day×device×dest | Daily OTP rates | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `mv_express_otp_daily` | `01_express_checkout` | `mv` | | | | `express_checkout_events` | `express_otp_stats_daily` | | Fills daily agg | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
 
-**Conversation rule:** query the **target aggregate table**, not the MV; treat a normal view as SQL helper only.
-
----
-
-### 4. `meta_event_registry`
-
-**Use:** Event name → ClickHouse table + funnel stage.
-
-| feature_id | event_name | target_table | funnel_stage | sample_count | run_id | created_at | updated_at |
-|------------|------------|--------------|--------------|--------------|--------|------------|------------|
-| `01_express_checkout` | `express_checkout_shown` | `express_checkout_events` | `1` | `1500` | `a1b2c3…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `01_express_checkout` | `otp_entered` | `express_checkout_events` | `4` | `910` | `a1b2c3…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+**Rule:** query `aggregate` / `raw` for data; use `mv.target`, don’t query the MV for facts.
 
 ---
 
-### 5. `meta_field_registry`
+### 3. `meta_events`
 
-**Use:** Fields / columns per event (including fields added later).
+**Use:** Event → table + funnel order.
 
-| feature_id | event_name | field_path | column_name | inferred_type | is_nullable | null_rate | in_spec | in_events | created_at | updated_at |
-|------------|------------|------------|-------------|---------------|-------------|-----------|---------|-----------|------------|------------|
-| `01_express_checkout` | `otp_entered` | `otp_success` | `otp_success` | `UInt8` | `false` | `0.0` | `true` | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `01_express_checkout` | `otp_entered` | `otp_channel` | `otp_channel` | `LowCardinality(String)` | `true` | `0.12` | `false` | `true` | `2026-06-10 09:00:00+00` | `2026-06-10 09:00:00+00` |
-
----
-
-### 6. `meta_schema_decisions`
-
-**Use:** Why CH schema choices were made (`order_by`, `partition`, `strategy`, `type`, `mv`).
-
-| feature_id | table_name | decision_kind | decision_value | rationale | created_at | updated_at |
-|------------|------------|---------------|----------------|-----------|------------|------------|
-| `01_express_checkout` | `express_checkout_events` | `order_by` | `(timestamp, user_id, device_type)` | Queries filter by time + segment, never by `id` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
-| `01_express_checkout` | `express_otp_stats_daily` | `mv` | `mv_express_otp_daily → express_otp_stats_daily` | Daily OTP rates for Conversation without scanning raw | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| feature_id | event_name | object_name | funnel_stage | sample_count | run_id | created_at | updated_at |
+|------------|------------|-------------|--------------|--------------|--------|------------|------------|
+| `01_express_checkout` | `express_checkout_shown` | `express_checkout_events` | `1` | `1500` | `a1b2…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `01_express_checkout` | `otp_entered` | `express_checkout_events` | `4` | `910` | `a1b2…` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
 
 ---
 
-## Context layer (Context Agent → Postgres)
+### 4. `meta_fields`
 
-### 7. `context_versions`
+**Use:** Columns / paths per event.
 
-**Use:** Each published version of the living context. Conversation pins insights to one version.
+| feature_id | event_name | field_path | column_name | inferred_type | null_rate | in_events | created_at | updated_at |
+|------------|------------|------------|-------------|---------------|-----------|-----------|------------|------------|
+| `01_express_checkout` | `otp_entered` | `otp_success` | `otp_success` | `UInt8` | `0.0` | `true` | `2026-06-08 12:00:00+00` | `2026-06-08 12:00:00+00` |
+| `01_express_checkout` | `otp_entered` | `otp_channel` | `otp_channel` | `LowCardinality(String)` | `0.12` | `true` | `2026-06-10 09:00:00+00` | `2026-06-10 09:00:00+00` |
+
+---
+
+## Context (Context Agent)
+
+### 5. `context_versions`
+
+**Use:** Version pointer. Conversation uses `is_current = true`.
 
 | context_version | parent_version | source | feature_id | is_current | summary | created_at | updated_at |
 |-----------------|----------------|--------|------------|------------|---------|------------|------------|
-| `v0` | `null` | `seed` | `null` | `false` | Seeded from `base_context.md` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `v3` | `v2` | `instrumentation` | `01_express_checkout` | `true` | Express meta reconciled; OTP linked to K1 | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v0` | | `seed` | | `false` | From `base_context.md` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
+| `v3` | `v2` | `instrumentation` | `01_express_checkout` | `true` | Express + OTP↔K1 | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+
+All tables below are scoped by `context_version` (copy-forward on publish, or SCD — pick one in code).
 
 ---
 
-### 8. `context_snapshots`
+### 6. `context_entities`
 
-**Use:** Full JSON payload for “get latest context” in one read.
+**Use:** Business entity definitions.
 
-| context_version | body (sketch) | created_at | updated_at |
-|-----------------|---------------|------------|------------|
-| `v0` | `{ "entities": [...], "metrics": [...], "funnels": ["pre_purchase"], "issues": ["K1"…"K7"] }` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `v3` | `{ …, "features": ["01_express_checkout"], "funnels": ["pre_purchase", "express_checkout"] }` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
-
----
-
-### 9. `context_entities`
-
-**Use:** What business objects mean.
-
-| entity_key | definition (short) | primary_id_field | created_at | updated_at |
-|------------|--------------------|------------------|------------|------------|
-| `user` | Traveller on Atlys; may browse many destinations | `user_id` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `application` | One visa application; created at `application_started` | `application_id` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
+| context_version | entity_key | definition | primary_id_field | created_at | updated_at |
+|-----------------|------------|------------|------------------|------------|------------|
+| `v3` | `user` | Traveller on Atlys | `user_id` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `application` | Created at application_started | `application_id` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-### 10. `context_metrics`
+### 7. `context_metrics`
 
-**Use:** Metric formulas, grain, and caveats.
+**Use:** Metric formulas and caveats.
 
-| metric_key | formula (short) | grain | computable | caveats | created_at | updated_at |
-|------------|-----------------|-------|------------|---------|------------|------------|
-| `funnel_conversion` | `purchase_completed` users ÷ `application_started` users | `user` | `true` | Funnel dashboards use this denominator | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `express_otp_success_rate` | `otp_success=1` ÷ `otp_entered` | `event` | `true` | Cut by `device_type` / `os` (see K1) | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
-
----
-
-### 11. `context_joins`
-
-**Use:** How tables link for journey analysis.
-
-| from_table | to_table | join_keys | notes | created_at | updated_at |
-|------------|----------|-----------|-------|------------|------------|
-| `application_started` | `document_uploaded` | `{application_id}` | Empty before application start | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `express_checkout_events` | `purchase_completed` | `{application_id, user_id}` | Compare Express vs standard pay path | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| context_version | metric_key | formula | grain | computable | caveats | created_at | updated_at |
+|-----------------|------------|---------|-------|------------|---------|------------|------------|
+| `v3` | `funnel_conversion` | purchase_completed users / application_started users | `user` | `true` | Leadership may use sessions — see contradictions | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `express_otp_success_rate` | otp_success=1 / otp_entered | `event` | `true` | Cut by device_type / os (K1) | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-### 12. `context_funnels`
+### 8. `context_joins`
 
-**Use:** Ordered funnel definitions (core + per feature).
+**Use:** How tables link (`join_keys` as plain text, comma-separated).
 
-| funnel_key | feature_id | steps (ordered) | created_at | updated_at |
-|------------|------------|-----------------|------------|------------|
-| `pre_purchase` | `null` | `destination_card_clicked` → `application_started` → `document_uploaded` → `purchase_completed` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `express_checkout` | `01_express_checkout` | `shown` → `selected` → `saved_method` → `otp_entered` → `express_payment_confirmed` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
-
----
-
-### 13. `context_known_issues`
-
-**Use:** Product quirks Conversation should cite when interpreting numbers.
-
-| issue_id | title | analytic_hook | created_at | updated_at |
-|----------|-------|---------------|------------|------------|
-| `K1` | iOS WebKit OTP autofill regression | Watch OTP / pay → purchase on iOS, Gulf geos | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `K6` | SUMMER20 coupon campaign | Elevated `coupon_applied`, lower realised `value` | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
+| context_version | from_table | to_table | join_keys | notes | created_at | updated_at |
+|-----------------|------------|----------|-----------|-------|------------|------------|
+| `v3` | `application_started` | `document_uploaded` | `application_id` | Empty before start | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `express_checkout_events` | `purchase_completed` | `application_id,user_id` | Express vs standard pay | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-### 14. `context_contradictions`
+### 9. `context_funnels` + `context_funnel_steps`
 
-**Use:** Conflicting definitions — surface them; do not silently pick one.
+**Use:** Named funnels and ordered steps (no arrays/JSON).
 
-| contradiction_key | left_claim | right_claim | status | guidance_for_analytics | created_at | updated_at |
-|-------------------|------------|-------------|--------|------------------------|------------|------------|
-| `conversion_denominator` | Leadership: purchases ÷ **sessions** | Funnel dashboards: purchases ÷ **application_started** | `open` | State which denominator you used | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
-| `eta_field_name` | Context prose: `visa_issuance_eta_days` | DDL: `eta_shown` (String) | `open` | Prefer DDL column; note type mismatch | `2026-04-01 00:00:00+00` | `2026-04-01 00:00:00+00` |
+| context_version | funnel_key | feature_id | created_at | updated_at |
+|-----------------|------------|------------|------------|------------|
+| `v3` | `pre_purchase` | | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `express_checkout` | `01_express_checkout` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+
+| context_version | funnel_key | step_order | step_name | created_at | updated_at |
+|-----------------|------------|------------|-----------|------------|------------|
+| `v3` | `pre_purchase` | `1` | `destination_card_clicked` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `pre_purchase` | `2` | `application_started` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `express_checkout` | `4` | `otp_entered` | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
 
 ---
 
-## Flow (updated repo)
+### 10. `context_known_issues`
+
+**Use:** Product quirks (K1–K7, …).
+
+| context_version | issue_id | title | analytic_hook | created_at | updated_at |
+|-----------------|----------|-------|---------------|------------|------------|
+| `v3` | `K1` | iOS WebKit OTP autofill | OTP/pay → purchase on iOS, Gulf geos | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `K6` | SUMMER20 coupon | Higher coupon_applied, lower value | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+
+---
+
+### 11. `context_contradictions`
+
+**Use:** Conflicting definitions to surface, not hide.
+
+| context_version | contradiction_key | left_claim | right_claim | status | guidance | created_at | updated_at |
+|-----------------|-------------------|------------|-------------|--------|----------|------------|------------|
+| `v3` | `conversion_denominator` | purchases / sessions | purchases / application_started | `open` | State which denominator you used | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+| `v3` | `eta_field_name` | visa_issuance_eta_days | eta_shown (DDL) | `open` | Prefer DDL column | `2026-06-08 12:01:00+00` | `2026-06-08 12:01:00+00` |
+
+---
+
+## Flow
 
 ```
-Instrumentation (Agno on FastAPI)
-  → ClickHouse: CREATE / load facts (+ optional MVs / aggs)
-  → Postgres: instrumentation_runs + meta_*
-
-Context (Agno on FastAPI)
-  → reads meta_*
-  → reconciles base_context
-  → writes context_versions / snapshots / entities / …
-
-Conversation (SQLTools data agent)
-  → introspects Postgres meta + context
-  → aggregates on ClickHouse
-  → PM insight citing context_version
+Instrumentation → CH + meta_objects / meta_events / meta_fields
+Context        → bump context_versions + fill relational context_* rows
+Conversation   → is_current version → SELECT context_* → aggregate in CH
 ```
 
-## Conversation read recipe
+## Conversation read
 
-1. Current `context_versions` (`is_current = true`).  
-2. `context_snapshots` (and/or relational context rows).  
-3. `meta_*` for tables / events / fields / views / decisions.  
-4. Prefer **aggregate** tables when grain matches; else raw.  
-5. Query **ClickHouse** for aggregates only; cite `context_version` in the insight.
+1. `context_versions` where `is_current`  
+2. Load entities / metrics / joins / funnel steps / issues / contradictions for that version  
+3. Prefer `meta_objects.kind = 'aggregate'`, else `raw`
