@@ -1,5 +1,5 @@
-import { memo, useCallback } from 'react';
-import { useRecoilValue } from 'recoil';
+import { memo, useCallback, useEffect, useRef } from 'react';
+import { useRecoilValue, useSetRecoilState } from 'recoil';
 import { SquarePen } from 'lucide-react';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,8 @@ import { useLocalize, useNewConvo } from '~/hooks';
 import { clearMessagesCache, cn } from '~/utils';
 import store from '~/store';
 
+const REPORTS_PANEL_ID = 'reports';
+
 const NewChatButton = memo(function NewChatButton({
   setActive,
 }: {
@@ -22,6 +24,7 @@ const NewChatButton = memo(function NewChatButton({
   const { newConversation } = useNewConvo();
   const conversation = useRecoilValue(store.conversationByIndex(0));
   const switchToHistory = useRecoilValue(store.newChatSwitchToHistory);
+  const setSelectedReportId = useSetRecoilState(store.selectedReportId);
   const tooltipDescription = useShortcutHint('newChat', localize('com_ui_new_chat'));
   const ariaKey = useShortcutAriaKey('newChat');
 
@@ -31,13 +34,21 @@ const NewChatButton = memo(function NewChatButton({
         e.preventDefault();
         clearMessagesCache(queryClient, conversation?.conversationId);
         queryClient.invalidateQueries([QueryKeys.messages]);
+        setSelectedReportId(null);
         newConversation();
         if (switchToHistory) {
           setActive(DEFAULT_PANEL);
         }
       }
     },
-    [queryClient, conversation?.conversationId, newConversation, switchToHistory, setActive],
+    [
+      queryClient,
+      conversation?.conversationId,
+      newConversation,
+      switchToHistory,
+      setActive,
+      setSelectedReportId,
+    ],
   );
 
   return (
@@ -134,7 +145,27 @@ function ExpandedPanel({
 }) {
   const localize = useLocalize();
   const { active, setActive } = useActivePanel();
+  const selectedReportId = useRecoilValue(store.selectedReportId);
+  const previousReportIdRef = useRef<string | null>(selectedReportId);
   const effectiveActive = resolveActivePanel(active, links);
+  const hasReportsPanel = links.some((link) => link.id === REPORTS_PANEL_ID);
+
+  // Report view overlays chat URLs — sync nav: open report → Reports, leave report → Chats.
+  useEffect(() => {
+    const previousReportId = previousReportIdRef.current;
+    previousReportIdRef.current = selectedReportId;
+
+    if (!hasReportsPanel) {
+      return;
+    }
+    if (selectedReportId) {
+      setActive(REPORTS_PANEL_ID);
+      return;
+    }
+    if (previousReportId) {
+      setActive(DEFAULT_PANEL);
+    }
+  }, [selectedReportId, hasReportsPanel, setActive]);
 
   const toggleLabel = expanded ? 'com_nav_close_sidebar' : 'com_nav_open_sidebar';
   const toggleClick = expanded ? onCollapse : onExpand;
