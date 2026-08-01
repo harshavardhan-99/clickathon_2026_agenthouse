@@ -124,9 +124,12 @@ Ordered by priority:
 
 ### 1. Seed `v0`
 
-Call `publish_context_version` (library or tool) with `source=seed` and base entities /
-metrics / core `funnel_step`s / issues / contradictions so Conversation is never empty.
-No separate seed tool — reuse publish.
+```bash
+uv run python context_agent/scripts/seed_v0.py
+```
+
+Calls `publish_context_version` with `source=seed` and base entities / metrics /
+core `funnel_step`s so Conversation is never empty. Idempotent unless `--force`.
 
 ### 2. Reconcile after Instrumentation
 

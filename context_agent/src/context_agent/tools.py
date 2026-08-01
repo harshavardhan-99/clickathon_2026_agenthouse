@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from agno.tools import Toolkit
 
+import context_agent.catalog as _catalog
 from context_agent.catalog import get_feature_meta, get_latest_context_items
 from context_agent.publish import publish_context_version
+
+
+def _row_to_dict_compatible(row: Any) -> dict[str, Any]:
+    """RowMapping (.mappings()) has no usable ._mapping attr — use dict(row)."""
+    d = dict(row)
+    for k, v in list(d.items()):
+        if hasattr(v, "isoformat"):
+            d[k] = v.isoformat()
+    return d
+
+
+# catalog._row_to_dict breaks on SQLAlchemy RowMapping; patch without editing catalog.py
+_catalog._row_to_dict = _row_to_dict_compatible
 
 
 class ContextCatalogTools(Toolkit):

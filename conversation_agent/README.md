@@ -13,7 +13,9 @@ User question
       │
       ▼
 ┌─────────────────┐
-│ discover_schema │  schema_context.md → SchemaContext   (LLM)
+│ discover_schema │  context catalog tools only
+│                 │  (get_latest_context_items, get_feature_meta)
+│                 │  → SchemaContext   (LLM)
 └────────┬────────┘
          ▼
 ┌─────────────────┐
