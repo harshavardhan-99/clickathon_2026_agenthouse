@@ -5,9 +5,10 @@ description = "Click-a-thon 2026 Atlys AgentHouse — FastAPI + Agno agents on C
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "agno[openai,psycopg,sql]>=2.0",
+    "agno[google,openai,psycopg,sql]>=2.0",
     "clickhouse-connect>=0.8",
     "fastapi>=0.115",
+    "google-genai>=1.52",
     "httpx>=0.28",
     "pydantic-settings>=2.7",
     "python-dotenv>=1.0",

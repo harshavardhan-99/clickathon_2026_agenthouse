@@ -84,14 +84,14 @@ def build_create_table_sql(profile: EventProfile, database: str) -> str:
     order_by = _order_by_sql(cols)
     partition = "PARTITION BY toYYYYMM(timestamp)" if "timestamp" in cols else ""
     sql = f"""
-CREATE TABLE `{database}`.`{profile.ch_table}`
-(
-    {col_defs}
-)
-ENGINE = MergeTree
-{partition}
-ORDER BY {order_by}
-""".strip()
+                CREATE TABLE `{database}`.`{profile.ch_table}`
+                (
+                    {col_defs}
+                )
+                ENGINE = MergeTree
+                {partition}
+                ORDER BY {order_by}
+            """.strip()
     tree = validate_sql(sql)
     if not isinstance(tree, exp.Create):
         raise ValueError(f"expected CREATE statement, got {type(tree)}")

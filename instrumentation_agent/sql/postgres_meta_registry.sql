@@ -1,4 +1,3 @@
--- Instrumentation metadata (Postgres): feature journey + event-level rows.
 
 CREATE TABLE IF NOT EXISTS meta_features (
   feature_id TEXT PRIMARY KEY,

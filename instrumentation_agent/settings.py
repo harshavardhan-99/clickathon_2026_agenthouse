@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     clickhouse_database: str = "default"
     clickhouse_secure: bool = True
 
+    # Agno reads GOOGLE_API_KEY from the environment; model id is configurable.
+    google_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
 
 @lru_cache
 def get_settings() -> Settings:
