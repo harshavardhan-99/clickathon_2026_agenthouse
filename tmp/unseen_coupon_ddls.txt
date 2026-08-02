@@ -1,0 +1,257 @@
+
+######## unseen_data (coupon checkout) ########
+-- unseen_data / coupon_field_shown
+CREATE TABLE atlys.coupon_field_shown
+(
+    `os` String,
+    `user_id` String,
+    `currency` String,
+    `timestamp` DateTime64(3),
+    `cart_value` String,
+    `destination` String,
+    `device_type` String,
+    `application_id` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for coupon_field_shown
+CREATE MATERIALIZED VIEW atlys.mv_coupon_field_shown_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'coupon_field_shown' AS event_name,
+    'coupon_field_shown' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'currency', 'timestamp', 'cart_value', 'destination', 'device_type', 'application_id', 'geoip_country_code'], [toString(os), toString(user_id), toString(currency), toString(timestamp), toString(cart_value), toString(destination), toString(device_type), toString(application_id), toString(geoip_country_code)])) AS payload
+FROM atlys.coupon_field_shown
+-- unseen_data / coupon_entered
+CREATE TABLE atlys.coupon_entered
+(
+    `os` String,
+    `user_id` String,
+    `timestamp` DateTime64(3),
+    `coupon_code` String,
+    `destination` String,
+    `device_type` String,
+    `application_id` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for coupon_entered
+CREATE MATERIALIZED VIEW atlys.mv_coupon_entered_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'coupon_entered' AS event_name,
+    'coupon_entered' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'timestamp', 'coupon_code', 'destination', 'device_type', 'application_id', 'geoip_country_code'], [toString(os), toString(user_id), toString(timestamp), toString(coupon_code), toString(destination), toString(device_type), toString(application_id), toString(geoip_country_code)])) AS payload
+FROM atlys.coupon_entered
+-- unseen_data / coupon_applied
+CREATE TABLE atlys.coupon_applied
+(
+    `os` String,
+    `user_id` String,
+    `timestamp` DateTime64(3),
+    `destination` String,
+    `device_type` String,
+    `discount_type` String,
+    `application_id` String,
+    `discount_amount` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for coupon_applied
+CREATE MATERIALIZED VIEW atlys.mv_coupon_applied_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'coupon_applied' AS event_name,
+    'coupon_applied' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'timestamp', 'destination', 'device_type', 'discount_type', 'application_id', 'discount_amount', 'geoip_country_code'], [toString(os), toString(user_id), toString(timestamp), toString(destination), toString(device_type), toString(discount_type), toString(application_id), toString(discount_amount), toString(geoip_country_code)])) AS payload
+FROM atlys.coupon_applied
+-- unseen_data / coupon_rejected
+CREATE TABLE atlys.coupon_rejected
+(
+    `os` String,
+    `user_id` String,
+    `timestamp` DateTime64(3),
+    `destination` String,
+    `device_type` String,
+    `reject_reason` String,
+    `application_id` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for coupon_rejected
+CREATE MATERIALIZED VIEW atlys.mv_coupon_rejected_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'coupon_rejected' AS event_name,
+    'coupon_rejected' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'timestamp', 'destination', 'device_type', 'reject_reason', 'application_id', 'geoip_country_code'], [toString(os), toString(user_id), toString(timestamp), toString(destination), toString(device_type), toString(reject_reason), toString(application_id), toString(geoip_country_code)])) AS payload
+FROM atlys.coupon_rejected
+-- unseen_data / discount_shown
+CREATE TABLE atlys.discount_shown
+(
+    `os` String,
+    `user_id` String,
+    `timestamp` DateTime64(3),
+    `destination` String,
+    `device_type` String,
+    `application_id` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for discount_shown
+CREATE MATERIALIZED VIEW atlys.mv_discount_shown_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'discount_shown' AS event_name,
+    'discount_shown' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'timestamp', 'destination', 'device_type', 'application_id', 'geoip_country_code'], [toString(os), toString(user_id), toString(timestamp), toString(destination), toString(device_type), toString(application_id), toString(geoip_country_code)])) AS payload
+FROM atlys.discount_shown
+-- unseen_data / checkout_with_coupon
+CREATE TABLE atlys.checkout_with_coupon
+(
+    `os` String,
+    `user_id` String,
+    `timestamp` DateTime64(3),
+    `coupon_code` String,
+    `destination` String,
+    `device_type` String,
+    `final_value` String,
+    `application_id` String,
+    `discount_amount` String,
+    `geoip_country_code` String
+)
+ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+PARTITION BY toYYYYMM(timestamp)
+ORDER BY (toDate(timestamp), device_type, destination, user_id, application_id)
+SETTINGS index_granularity = 8192
+-- MV for checkout_with_coupon
+CREATE MATERIALIZED VIEW atlys.mv_checkout_with_coupon_to_activity TO atlys.activity_events
+(
+    `event_name` String,
+    `ch_table` String,
+    `timestamp` DateTime64(3),
+    `user_id` String,
+    `application_id` String,
+    `device_type` String,
+    `os` String,
+    `geoip_country_code` String,
+    `destination` String,
+    `payload` String
+)
+AS SELECT
+    'checkout_with_coupon' AS event_name,
+    'checkout_with_coupon' AS ch_table,
+    timestamp AS timestamp,
+    toString(user_id) AS user_id,
+    toString(application_id) AS application_id,
+    toString(device_type) AS device_type,
+    toString(os) AS os,
+    toString(geoip_country_code) AS geoip_country_code,
+    toString(destination) AS destination,
+    toJSONString(mapFromArrays(['os', 'user_id', 'timestamp', 'coupon_code', 'destination', 'device_type', 'final_value', 'application_id', 'discount_amount', 'geoip_country_code'], [toString(os), toString(user_id), toString(timestamp), toString(coupon_code), toString(destination), toString(device_type), toString(final_value), toString(application_id), toString(discount_amount), toString(geoip_country_code)])) AS payload
+FROM atlys.checkout_with_coupon
