@@ -77,7 +77,7 @@ User question
       ▼
 ┌─────────────────┐
 │ discover_schema │  context catalog tools + SAS shape
-│                 │  (activity_events envelope + event_info)
+│                 │  (activity_events envelope + payload)
 │                 │  → SchemaContext   (LLM)
 └────────┬────────┘
          ▼

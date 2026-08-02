@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Create atlys.activity_events and backfill from existing per-event tables.
+"""Backfill atlys.activity_events from per-event tables (Instrumentation SAS shape).
 
-Skips funnel_events (denormalized subset of the funnel tables) to avoid duplicates.
+DDL matches instrumentation_agent (payload JSON, DateTime64(3), ch_table).
+Prefer Instrumentation MVs for feature events; this script backfills the 8
+legacy funnel/engagement tables (and any extra --sources).
 
 Usage:
     uv run python conversation_agent/scripts/build_activity_events.py
@@ -22,10 +24,9 @@ if str(_ROOT) not in sys.path:
 
 from conversation_agent import config
 
-# Minimal SAS envelope (everything else → event_info JSON)
+# Envelope columns on activity_events (everything else → payload JSON)
 ENVELOPE = frozenset(
     {
-        "id",
         "timestamp",
         "user_id",
         "application_id",
@@ -36,7 +37,7 @@ ENVELOPE = frozenset(
     }
 )
 
-# Source fact tables (not funnel_events)
+# Legacy source fact tables (not funnel_events / not activity_events)
 SOURCE_TABLES = (
     "destination_card_clicked",
     "application_started",
@@ -68,23 +69,24 @@ def _client():
 
 
 def _ddl(fqn: str) -> str:
+    """Match instrumentation_agent.utils.clickhouse.build_create_activity_events_sql."""
     return f"""
 CREATE TABLE IF NOT EXISTS {fqn}
 (
-    id String,
-    timestamp DateTime,
     event_name LowCardinality(String),
+    ch_table LowCardinality(String),
+    timestamp DateTime64(3),
     user_id String,
-    application_id Nullable(String),
-    device_type LowCardinality(Nullable(String)),
-    os LowCardinality(Nullable(String)),
-    geoip_country_code LowCardinality(Nullable(String)),
-    destination LowCardinality(Nullable(String)),
-    event_info String
+    application_id String,
+    device_type LowCardinality(String),
+    os LowCardinality(String),
+    geoip_country_code LowCardinality(String),
+    destination LowCardinality(String),
+    payload String
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(timestamp)
-ORDER BY (event_name, user_id, timestamp)
+ORDER BY (toDate(timestamp), event_name, user_id)
 SETTINGS index_granularity = 8192
 """.strip()
 
@@ -94,16 +96,23 @@ def _table_columns(client, database: str, table: str) -> list[str]:
     return [r[0] for r in rows]
 
 
-def _event_info_sql(columns: list[str]) -> str:
-    extras = [c for c in columns if c not in ENVELOPE]
-    if not extras:
-        return "toJSONString(map())"
-    # Stringify all payload fields; drop null/empty in mapFilter
-    pairs = ", ".join(f"'{c}', ifNull(toString(`{c}`), '')" for c in extras)
-    return (
-        "toJSONString(mapFilter((k, v) -> (v != '' AND v != 'NULL'), "
-        f"map({pairs})))"
-    )
+def _payload_sql(columns: list[str]) -> str:
+    """JSON of all source columns (same idea as Instrumentation MV payload)."""
+    if not columns:
+        return "CAST('{}' AS String)"
+    keys = ", ".join(f"'{c}'" for c in columns)
+    vals = ", ".join(f"ifNull(toString(`{c}`), '')" for c in columns)
+    return f"toJSONString(mapFromArrays([{keys}], [{vals}]))"
+
+
+def _envelope_expr(col: str, columns: list[str]) -> str:
+    if col not in columns:
+        if col == "timestamp":
+            return "toDateTime64(0, 3)"
+        return "CAST('' AS String)"
+    if col == "timestamp":
+        return f"toDateTime64(`{col}`, 3)"
+    return f"ifNull(toString(`{col}`), '')"
 
 
 def _insert_sql(
@@ -114,48 +123,52 @@ def _insert_sql(
     columns: list[str],
     sample: int | None,
 ) -> str:
-    info = _event_info_sql(columns)
-    has_id = "id" in columns
-    id_expr = "toString(id)" if has_id else f"generateUUIDv4()"
-    # Ensure envelope cols exist
-    for col in (
-        "timestamp",
-        "user_id",
-        "application_id",
-        "device_type",
-        "os",
-        "geoip_country_code",
-        "destination",
-    ):
-        if col not in columns:
-            raise RuntimeError(f"{table} missing required column {col}")
+    if "timestamp" not in columns or "user_id" not in columns:
+        raise RuntimeError(f"{table} missing required column timestamp/user_id")
 
+    payload = _payload_sql(columns)
     limit = f"\nLIMIT {int(sample)}" if sample and sample > 0 else ""
     return f"""
 INSERT INTO {fqn}
 (
-    id, timestamp, event_name, user_id, application_id,
-    device_type, os, geoip_country_code, destination, event_info
+    event_name, ch_table, timestamp, user_id, application_id,
+    device_type, os, geoip_country_code, destination, payload
 )
 SELECT
-    {id_expr} AS id,
-    timestamp,
     '{table}' AS event_name,
-    user_id,
-    application_id,
-    device_type,
-    os,
-    geoip_country_code,
-    destination,
-    {info} AS event_info
+    '{table}' AS ch_table,
+    {_envelope_expr("timestamp", columns)} AS timestamp,
+    {_envelope_expr("user_id", columns)} AS user_id,
+    {_envelope_expr("application_id", columns)} AS application_id,
+    {_envelope_expr("device_type", columns)} AS device_type,
+    {_envelope_expr("os", columns)} AS os,
+    {_envelope_expr("geoip_country_code", columns)} AS geoip_country_code,
+    {_envelope_expr("destination", columns)} AS destination,
+    {payload} AS payload
 FROM `{database}`.`{table}`
 {limit}
 """.strip()
 
 
-def build(*, drop: bool = False, sample: int | None = None) -> dict:
+def _resolve_sources(client, database: str, extra: list[str]) -> list[str]:
+    sources = list(SOURCE_TABLES) + [s for s in extra if s and s not in SOURCE_TABLES]
+    existing = []
+    for src in sources:
+        try:
+            _table_columns(client, database, src)
+            existing.append(src)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  skip {src}: {exc}")
+    return existing
+
+
+def build(
+    *,
+    drop: bool = False,
+    sample: int | None = None,
+    extra_sources: list[str] | None = None,
+) -> dict:
     database = config.CLICKHOUSE_DATABASE
-    table_name = config.CLICKHOUSE_ACTIVITY_TABLE or "activity_events"
     fqn = config.activity_table_fqn()
 
     client = _client()
@@ -165,14 +178,14 @@ def build(*, drop: bool = False, sample: int | None = None) -> dict:
             print(f"Dropped {fqn}")
 
         client.command(_ddl(fqn))
-        print(f"Ensured {fqn}")
+        print(f"Ensured {fqn} (Instrumentation SAS: payload + DateTime64)")
 
-        # Fresh fill: truncate then insert (safer than drop on Cloud permissions)
         client.command(f"TRUNCATE TABLE IF EXISTS {fqn}")
         print(f"Truncated {fqn}")
 
+        sources = _resolve_sources(client, database, extra_sources or [])
         totals: dict[str, int] = {}
-        for src in SOURCE_TABLES:
+        for src in sources:
             cols = _table_columns(client, database, src)
             sql = _insert_sql(
                 database=database,
@@ -183,7 +196,6 @@ def build(*, drop: bool = False, sample: int | None = None) -> dict:
             )
             print(f"Inserting from {src}…")
             client.command(sql)
-            # count for this event_name
             n = client.query(
                 f"SELECT count() FROM {fqn} WHERE event_name = {{n:String}}",
                 parameters={"n": src},
@@ -206,12 +218,15 @@ def build(*, drop: bool = False, sample: int | None = None) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build SAS activity_events from existing ClickHouse event tables"
+        description=(
+            "Backfill activity_events (Instrumentation SAS shape) from "
+            "per-event ClickHouse tables"
+        )
     )
     parser.add_argument(
         "--drop",
         action="store_true",
-        help="DROP TABLE before CREATE (default: CREATE IF NOT EXISTS + TRUNCATE)",
+        help="DROP TABLE before CREATE (needed to migrate off event_info DDL)",
     )
     parser.add_argument(
         "--sample",
@@ -219,8 +234,14 @@ def main() -> None:
         default=None,
         help="Limit rows per source table (for a quick sample load)",
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Extra per-event table to include (repeatable), e.g. express_checkout_shown",
+    )
     args = parser.parse_args()
-    result = build(drop=args.drop, sample=args.sample)
+    result = build(drop=args.drop, sample=args.sample, extra_sources=args.source)
     print(result)
 
 

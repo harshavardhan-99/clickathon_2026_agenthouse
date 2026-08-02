@@ -14,7 +14,7 @@ Context publishes context_versions / context_items → Postgres
         │
         ▼
   get_latest_context_items()   → meaning (context_*)
-  get_feature_meta(feature_id) → journey + shared activity table + event_info columns
+  get_feature_meta(feature_id) → journey + per-event ch_table + payload columns
   publish_context_version(...) → new context version (copy-forward + deltas)
         │
         ▼

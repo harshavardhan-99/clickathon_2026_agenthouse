@@ -27,8 +27,8 @@ BASE_INSTRUCTIONS = [
     f"CRITICAL: Always query {_FQN}. Do not use FROM events, funnel_events, or "
     "UNION per-event tables. Filter / windowFunnel conditions use `event_name`; "
     "time column is `timestamp` (DateTime64(3)). Envelope segments: device_type, "
-    "os, geoip_country_code, destination. Payload fields live in `event_info` / "
-    "`payload` (use JSONExtract* when needed).",
+    "os, geoip_country_code, destination. Event-specific fields live in `payload` "
+    "(JSON — use JSONExtract*).",
     f"For conversion funnels use windowFunnel() on {_FQN} with "
     "toDateTime(timestamp) as the time arg (DateTime64 is illegal for "
     "windowFunnel). Comment window unit in seconds; ordered event_name "
@@ -38,8 +38,8 @@ BASE_INSTRUCTIONS = [
     "(plus segment_value when VizSpec asks for a segment cut).",
     f"Also set QuerySpec.funnel, window_seconds, step_names, filters, tables_used "
     f"(['{_TABLE}']), and caveats for the skill JSON contract.",
-    "Do not invent event names or event_info keys absent from VizSpec / skill / catalog.",
-    "Companion metrics (latency, AOV, K-factor) may need JSONExtract on event_info — "
+    "Do not invent event names or payload keys absent from VizSpec / skill / catalog.",
+    "Companion metrics (latency, AOV, K-factor) may need JSONExtract on payload — "
     "note in caveats; prefer one primary query.",
 ]
 

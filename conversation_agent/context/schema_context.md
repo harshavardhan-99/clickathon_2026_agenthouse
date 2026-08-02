@@ -9,16 +9,16 @@ This file is a static reminder of the physical SAS — not injected into the age
 
 | Column | Notes |
 |--------|--------|
-| `id` | Event id |
-| `timestamp` | DateTime64(3) — use `toDateTime(timestamp)` in `windowFunnel` |
 | `event_name` | Event name — funnel conditions |
+| `ch_table` | Source per-event table |
+| `timestamp` | DateTime64(3) — use `toDateTime(timestamp)` in `windowFunnel` |
 | `user_id` | Journey partition |
 | `application_id` | From `application_started` onward |
 | `device_type` | Segment |
 | `os` | Segment |
 | `geoip_country_code` | Segment |
 | `destination` | Segment |
-| `event_info` | JSON payload |
+| `payload` | JSON payload |
 
 ## Core funnel
 

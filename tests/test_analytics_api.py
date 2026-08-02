@@ -35,8 +35,8 @@ from conversation_agent.models import (
 def test_catalog_aliases():
     assert resolve_dimension("country").column == "geoip_country_code"
     assert resolve_dimension("channel").column == "device_type"
-    assert resolve_metric("revenue").expression == "sum(value)"
-    assert resolve_metric("users").table == "funnel_events"
+    assert "JSONExtractFloat(payload" in resolve_metric("revenue").expression
+    assert resolve_metric("users").table == "activity_events"
     assert list_dimensions()
     assert list_metrics()
     assert "Allowed dimensions" in catalog_prompt_blurb()
@@ -108,7 +108,7 @@ def test_sql_builders_parse():
     )
     validate_select_sql(pivot)
     dims = build_dimension_values_sql(
-        table="atlys.funnel_events",
+        table="atlys.activity_events",
         column="geoip_country_code",
         fromtime="2026-01-01",
         totime="2026-06-30",

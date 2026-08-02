@@ -19,7 +19,7 @@ INSTRUCTIONS = [
     "Only use fields present in the schema / catalog. Do not invent columns or events.",
     "Physical fact table is the Single Activity Schema (activity_events): filter on "
     "event_name; segment on device_type / os / geoip_country_code / destination; "
-    "payload metrics may need event_info JSON keys when listed in schema.",
+    "payload metrics may need payload JSON keys when listed in schema.",
     "Return a VizSpec JSON with: kind (visualization type), optional title, "
     "metric_names, dimensions, event_names, time_window, rationale.",
     "Viz kind — pick the best fit among: "

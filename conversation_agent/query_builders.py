@@ -203,7 +203,7 @@ FROM funnel_levels
         caveats=(
             f"windowFunnel({FUNNEL_TS}) on {table.split('.')[-1]} ({EVENT_COL}); "
             "timestamp is DateTime64(3) — cast required; "
-            "payload fields live in event_info/payload (JSONExtract when needed)"
+            "payload fields live in payload (JSONExtract when needed)"
         ),
         step_names=steps,
         window_seconds=window,

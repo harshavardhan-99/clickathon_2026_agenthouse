@@ -150,10 +150,10 @@ class ContextCatalogTools(Toolkit):
     def get_feature_meta(self, feature_id: str) -> str:
         """Load Instrumentation meta for one feature (meta_features + meta_events).
 
-        Use for feature-specific PM questions (Express, Group, Forex, …).
-        Events are ordered by journey_order. Under Single Activity Schema,
-        ch_table is typically the shared activity table; event-specific fields
-        are described in events.columns / event_info keys.
+        Events are ordered by journey_order from meta_features.journey.
+        ch_table is the per-event ClickHouse table; SAS sink is activity_events
+        with envelope + payload (JSON). Event-specific fields are in
+        events.columns / JSONExtract on payload.
 
         Args:
             feature_id: e.g. \"01_express_checkout\"

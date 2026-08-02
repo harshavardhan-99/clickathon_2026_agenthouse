@@ -55,20 +55,22 @@ def _seed_upserts() -> list[dict[str, Any]]:
             "payload": {
                 "table": _ACTIVITY_TABLE,
                 "columns": [
-                    "id",
-                    "timestamp",
                     "event_name",
+                    "ch_table",
+                    "timestamp",
                     "user_id",
                     "application_id",
                     "device_type",
                     "os",
                     "geoip_country_code",
                     "destination",
-                    "event_info",
+                    "payload",
                 ],
                 "definition": (
-                    "One row per event. Envelope columns are top-level; "
-                    "event-specific fields live in event_info (JSON)."
+                    "One row per event (Instrumentation SAS). Envelope columns "
+                    "are top-level; event-specific fields live in payload (JSON). "
+                    "timestamp is DateTime64(3) — use toDateTime(timestamp) in "
+                    "windowFunnel."
                 ),
             },
         },
@@ -91,14 +93,14 @@ def _seed_upserts() -> list[dict[str, Any]]:
                 "formula": (
                     "users reaching purchase_completed / users at "
                     f"destination_card_clicked (windowFunnel on {_ACTIVITY_TABLE} "
-                    f"using {_EVENT_COL})"
+                    f"using {_EVENT_COL} + toDateTime(timestamp))"
                 ),
                 "grain": "user",
                 "table": _ACTIVITY_TABLE,
                 "event_column": _EVENT_COL,
                 "caveats": (
                     "Prefer max(timestamp)-relative windows; payload metrics use "
-                    "JSONExtract on event_info."
+                    "JSONExtract on payload."
                 ),
             },
         },
