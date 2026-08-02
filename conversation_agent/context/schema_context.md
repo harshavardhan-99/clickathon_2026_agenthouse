@@ -10,7 +10,7 @@ This file is a static reminder of the physical SAS — not injected into the age
 | Column | Notes |
 |--------|--------|
 | `id` | Event id |
-| `timestamp` | DateTime — `windowFunnel` / time filters |
+| `timestamp` | DateTime64(3) — use `toDateTime(timestamp)` in `windowFunnel` |
 | `event_name` | Event name — funnel conditions |
 | `user_id` | Journey partition |
 | `application_id` | From `application_started` onward |

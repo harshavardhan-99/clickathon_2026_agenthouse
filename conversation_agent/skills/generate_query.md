@@ -21,7 +21,7 @@ Do **not** query legacy per-event tables or `funnel_events`.
 | Column | Role |
 |--------|------|
 | `id` | Event id |
-| `timestamp` | DateTime — `windowFunnel` + time filters |
+| `timestamp` | DateTime64(3) — time filters OK as-is; **cast for `windowFunnel`** |
 | `event_name` | Event discriminator (use in filters / funnel conditions) |
 | `user_id` | Journey partition key |
 | `application_id` | Application grain (often empty before `application_started`) |
@@ -36,13 +36,17 @@ Partition key is usually `user_id`. For group/share funnels, extract
 
 ## 2. windowFunnel
 
+`timestamp` is **DateTime64(3)**. `windowFunnel` only accepts Unsigned /
+Date / DateTime — always cast:
+
 ```sql
-windowFunnel(window, [mode, ...])(timestamp, cond1, cond2, ..., condN)
+windowFunnel(window, [mode, ...])(toDateTime(timestamp), cond1, cond2, ..., condN)
 ```
 
-- `DateTime` → window in **seconds**. Comment the unit on every query.
+- Window unit is **seconds** (after `toDateTime`). Comment the unit on every query.
 - Conditions use **`event_name = '…'`** in funnel order.
 - Per-step reach = `countIf(level >= k)`.
+- Do **not** pass bare `timestamp` into `windowFunnel`.
 
 ### Base funnel (conversion by device)
 
@@ -53,7 +57,7 @@ WITH funnel_levels AS (
         user_id,
         any(device_type) AS device_type,
         windowFunnel(86400)(
-            timestamp,
+            toDateTime(timestamp),
             event_name = 'destination_card_clicked',
             event_name = 'application_started',
             event_name = 'document_uploaded',
