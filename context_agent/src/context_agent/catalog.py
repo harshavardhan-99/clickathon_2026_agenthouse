@@ -11,7 +11,9 @@ from context_agent.db import get_registry_engine
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
-    d = dict(row._mapping)
+    # RowMapping from .mappings() has no usable ._mapping; Row does.
+    mapping = getattr(row, "_mapping", None)
+    d = dict(mapping) if mapping is not None else dict(row)
     for k, v in list(d.items()):
         if hasattr(v, "isoformat"):
             d[k] = v.isoformat()
