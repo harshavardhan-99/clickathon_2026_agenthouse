@@ -96,7 +96,10 @@ def get_latest_context_items(kinds: list[str] | None = None) -> dict[str, Any]:
 def get_feature_meta(feature_id: str) -> dict[str, Any]:
     """Return Instrumentation meta for one feature (meta_features + meta_events).
 
-    Reads tables owned by instrumentation_agent — see TABLES.md.
+    Matches instrumentation_agent/sql/postgres_meta_registry.sql:
+    - meta_features: feature_id, journey JSONB, spec_path, updated_at
+    - meta_events: event_name PK, feature_id as CSV, ch_table, columns, status
+    Journey order lives in meta_features.journey, not on meta_events.
     """
     if not feature_id or not feature_id.strip():
         return {"error": "feature_id is required"}
@@ -107,8 +110,7 @@ def get_feature_meta(feature_id: str) -> dict[str, Any]:
         feature = conn.execute(
             text(
                 """
-                SELECT feature_id, journey, status, spec_path, events_path,
-                       run_id, event_count, error, updated_at
+                SELECT feature_id, journey, spec_path, updated_at
                 FROM meta_features
                 WHERE feature_id = :feature_id
                 """
@@ -116,28 +118,44 @@ def get_feature_meta(feature_id: str) -> dict[str, Any]:
             {"feature_id": feature_id},
         ).mappings().first()
 
+        # feature_id on meta_events is a CSV of feature ids (multi-feature).
         events = conn.execute(
             text(
                 """
-                SELECT event_name, feature_id, journey_order, ch_table,
-                       row_count, run_id, columns, registered_at
+                SELECT event_name, feature_id, ch_table, columns, status,
+                       registered_at
                 FROM meta_events
-                WHERE feature_id = :feature_id
-                ORDER BY journey_order, event_name
+                WHERE :feature_id = ANY (
+                    string_to_array(replace(feature_id, ' ', ''), ',')
+                )
+                ORDER BY event_name
                 """
             ),
             {"feature_id": feature_id},
         ).mappings().all()
 
         feature_row: dict[str, Any] | None = None
+        journey_order: dict[str, int] = {}
         if feature is not None:
             feature_row = _row_to_dict(feature)
             journey = feature_row.get("journey")
             if isinstance(journey, str):
                 try:
-                    feature_row["journey"] = json.loads(journey)
+                    journey = json.loads(journey)
+                    feature_row["journey"] = journey
                 except json.JSONDecodeError:
-                    pass
+                    journey = None
+            if isinstance(journey, list):
+                for step in journey:
+                    if not isinstance(step, dict):
+                        continue
+                    name = step.get("event_name")
+                    order = step.get("journey_order")
+                    if isinstance(name, str) and order is not None:
+                        try:
+                            journey_order[name] = int(order)
+                        except (TypeError, ValueError):
+                            pass
 
         event_rows = []
         for r in events:
@@ -148,7 +166,18 @@ def get_feature_meta(feature_id: str) -> dict[str, Any]:
                     item["columns"] = json.loads(cols)
                 except json.JSONDecodeError:
                     pass
+            # Attach journey_order from meta_features.journey for consumers
+            if item.get("event_name") in journey_order:
+                item["journey_order"] = journey_order[item["event_name"]]
             event_rows.append(item)
+
+        event_rows.sort(
+            key=lambda e: (
+                e.get("journey_order") is None,
+                e.get("journey_order") if e.get("journey_order") is not None else 0,
+                e.get("event_name") or "",
+            )
+        )
 
         if feature_row is None and not event_rows:
             return {

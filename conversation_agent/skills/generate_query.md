@@ -2,7 +2,7 @@
 name: clickhouse-activity-analytics
 description: >-
   Build product-analytics queries against the Single Activity Schema table
-  (atlys.activity_events) using event_name + envelope columns and event_info JSON.
+  (atlys.activity_events) using event_name + envelope columns and payload JSON.
   Use for funnels (windowFunnel), conversion, drop-off, segment cuts, and
   payload-deep metrics via JSONExtract.
 ---
@@ -20,19 +20,18 @@ Do **not** query legacy per-event tables or `funnel_events`.
 
 | Column | Role |
 |--------|------|
-| `id` | Event id |
-| `timestamp` | DateTime64(3) — time filters OK as-is; **cast for `windowFunnel`** |
 | `event_name` | Event discriminator (use in filters / funnel conditions) |
+| `ch_table` | Source per-event table name (Instrumentation) |
+| `timestamp` | DateTime64(3) — time filters OK as-is; **cast for `windowFunnel`** |
 | `user_id` | Journey partition key |
 | `application_id` | Application grain (often empty before `application_started`) |
 | `device_type` | Segment |
 | `os` | Segment |
 | `geoip_country_code` | Segment |
 | `destination` | Segment |
-| `event_info` | JSON string — event-specific payload |
+| `payload` | JSON string — event-specific fields |
 
-Partition key is usually `user_id`. For group/share funnels, extract
-`group_id` / `share_id` from `event_info` when present.
+For group/share funnels, extract `group_id` / `share_id` from `payload` when present.
 
 ## 2. windowFunnel
 
@@ -82,14 +81,14 @@ ORDER BY device_type
 
 Prefer max(timestamp)-relative windows (contest data is historical).
 
-## 3. Payload fields (`event_info`)
+## 3. Payload fields (`payload`)
 
 For OTP, revenue, capture quality, forex, etc.:
 
 ```sql
-JSONExtractString(event_info, 'otp_success')
-JSONExtractFloat(event_info, 'value')
-JSONExtractInt(event_info, 'retry_count')
+JSONExtractString(payload, 'otp_success')
+JSONExtractFloat(payload, 'value')
+JSONExtractInt(payload, 'retry_count')
 ```
 
 Only extract keys documented in context / `get_feature_meta` columns. Do not invent keys.

@@ -2,7 +2,8 @@
 
 **Context owns `context_*`. Instrumentation owns `meta_*`.**  
 ClickHouse = event facts. Postgres = registry + living business meaning.  
-No Agno agent in this package — Context is a **library** of deterministic tools for Conversation (and optional publish APIs).
+No Agno agent for *writes* — publish stays on seed / Instrumentation.  
+A **read-only** Agno Context Agent answers catalog questions (`python -m context_agent`).
 
 | Writer | Tables | DDL |
 |--------|--------|-----|
@@ -58,20 +59,21 @@ It does **not**: publish living context, seed `base_context`, or own Conversatio
 
 ### 1. `meta_features`
 
-One row per feature (latest run outcome).
+One row per feature.
 
-| feature_id | journey | status | spec_path | events_path | run_id | event_count | error | updated_at |
-|------------|---------|--------|-----------|-------------|--------|-------------|-------|------------|
-| `01_express_checkout` | `[{event_name, journey_order, ch_table, row_count}, …]` | `ok` | `…/spec.md` | `…/events.ndjson` | uuid | `9100` | | `2026-06-08…` |
+| feature_id | journey | spec_path | updated_at |
+|------------|---------|-----------|------------|
+| `01_express_checkout` | `[{event_name, journey_order, ch_table}, …]` | `…/spec.md` | `2026-06-08…` |
 
 ### 2. `meta_events`
 
-Event → shared CH activity table + journey order. Payload field shapes in
-`columns` (`{json_key: ch_type}` for `event_info`, plus envelope awareness).
+Event → per-event ClickHouse table. `feature_id` is a **CSV** of feature ids
+(multi-feature). Journey order lives in `meta_features.journey`. Column map in
+`columns` (`{col: ch_type}`); SAS JSON blob is **`payload`** on `activity_events`.
 
-| event_name | feature_id | journey_order | ch_table | row_count | run_id | columns | registered_at |
-|------------|------------|---------------|----------|-----------|--------|---------|---------------|
-| `otp_entered` | `01_express_checkout` | `4` | `activity_events` | `910` | uuid | `{"otp_success":"UInt8",…}` | `2026-06-08…` |
+| event_name | feature_id | ch_table | columns | status | registered_at |
+|------------|------------|----------|---------|--------|---------------|
+| `otp_entered` | `01_express_checkout` | `otp_entered` | `{"otp_success":"UInt8",…}` | `done` | `2026-06-08…` |
 
 ---
 
@@ -145,7 +147,7 @@ After `POST /v1/instrument` (or on demand):
 
 Conversation imports `get_context_catalog_tools()` and uses deterministic CH query
 builders against the Single Activity Schema (`activity_events` + `event_name` +
-`event_info`), citing `context_version`.
+`payload`), citing `context_version`.
 
 ### Explicit non-goals for Context
 
@@ -161,7 +163,7 @@ builders against the Single Activity Schema (`activity_events` + `event_name` +
 
 1. `get_latest_context_items` → current version + meaning  
 2. Filter `kind` as needed (`metric`, `issue`, `funnel_step`, …)  
-3. `get_feature_meta(feature_id)` → journey + shared `ch_table` + `event_info` columns  
+3. `get_feature_meta(feature_id)` → journey + per-event `ch_table` + `payload` columns  
 4. Run aggregates in **ClickHouse** (`activity_events`); cite `context_version` in the insight  
 
 ---

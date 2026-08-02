@@ -75,7 +75,7 @@ def _table_for_metric(metric: catalog.MetricDef) -> str:
 
 
 def _default_table() -> str:
-    return catalog.qualified_table("funnel_events")
+    return catalog.qualified_table(catalog.ACTIVITY_TABLE)
 
 
 def _infer_grain(fromtime: str, totime: str, grain: Optional[DataTimeGrain]) -> DataTimeGrain:
@@ -125,7 +125,7 @@ def _time_and_filters_where(
         *_filters_sql(filters),
     ]
     if event_filter:
-        parts.append(f"event = {_quote_str(event_filter)}")
+        parts.append(f"event_name = {_quote_str(event_filter)}")
     return " AND ".join(parts)
 
 
@@ -261,7 +261,7 @@ def build_dimension_values_sql(
         parts.append(f"timestamp < toDateTime({_quote_str(totime)}) + INTERVAL 1 DAY")
     parts.extend(_filters_sql(filters))
     if event_filter:
-        parts.append(f"event = {_quote_str(event_filter)}")
+        parts.append(f"event_name = {_quote_str(event_filter)}")
     where = " AND ".join(parts)
     return f"""
 SELECT
@@ -484,7 +484,7 @@ def _fetch_dimension_values_uncached(
             fromtime=request.fromtime,
             totime=request.totime,
             filters=request.filters,
-            event_filter=event_filter if "funnel_events" in table else None,
+            event_filter=event_filter if catalog.ACTIVITY_TABLE in table else None,
         )
         try:
             _cols, rows = run_query(sql)
@@ -507,7 +507,7 @@ def _fetch_dimension_values_uncached(
             filters=request.filters,
         )
         try:
-            # If column missing on primary table, try funnel_events with same name
+            # If column missing on primary table, try activity_events with same name
             fallback_table = _default_table()
             if _column_exists(fallback_table, column):
                 sql = build_dimension_values_sql(

@@ -150,10 +150,10 @@ class ContextCatalogTools(Toolkit):
     def get_feature_meta(self, feature_id: str) -> str:
         """Load Instrumentation meta for one feature (meta_features + meta_events).
 
-        Use for feature-specific PM questions (Express, Group, Forex, …).
-        Events are ordered by journey_order. Under Single Activity Schema,
-        ch_table is typically the shared activity table; event-specific fields
-        are described in events.columns / event_info keys.
+        Events are ordered by journey_order from meta_features.journey.
+        ch_table is the per-event ClickHouse table; SAS sink is activity_events
+        with envelope + payload (JSON). Event-specific fields are in
+        events.columns / JSONExtract on payload.
 
         Args:
             feature_id: e.g. \"01_express_checkout\"
@@ -251,3 +251,42 @@ class ContextCatalogTools(Toolkit):
 def get_context_catalog_tools() -> ContextCatalogTools:
     """Factory for other agents: read tools + publish_context_version."""
     return ContextCatalogTools()
+
+
+class ContextReadTools(Toolkit):
+    """Read-only catalog tools for the Context Agent (no publish)."""
+
+    def __init__(self):
+        tools = [
+            self.get_latest_context_items,
+            self.get_feature_meta,
+        ]
+        super().__init__(name="context_read", tools=tools)
+
+    def get_latest_context_items(self, kinds: Optional[str] = None) -> str:
+        """Load the current living context (version + all items by default).
+
+        Omit kinds to fetch every context_item for the current version.
+
+        Args:
+            kinds: Optional comma-separated filter, e.g. \"metric,funnel_step\".
+        """
+        kind_list: Sequence[str] | None = None
+        if kinds and kinds.strip():
+            kind_list = [k.strip() for k in kinds.split(",") if k.strip()]
+        result = get_latest_context_items(kinds=list(kind_list) if kind_list else None)
+        return json.dumps(result, default=str)
+
+    def get_feature_meta(self, feature_id: str) -> str:
+        """Load Instrumentation meta for one feature (journey + columns).
+
+        Args:
+            feature_id: e.g. \"01_express_checkout\" or \"unseen_data\"
+        """
+        result = get_feature_meta(feature_id=feature_id)
+        return json.dumps(result, default=str)
+
+
+def get_context_read_tools() -> ContextReadTools:
+    """Factory for the Context Agent: read-only (no publish)."""
+    return ContextReadTools()
