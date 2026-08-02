@@ -43,12 +43,12 @@ endpoints:
 # Allow LibreChat (Docker) to reach MCP on the host
 mcpSettings:
   allowedAddresses:
-    - "host.docker.internal:8000"
+    - "host.docker.internal:8001"
     - "host.docker.internal:7780"
 
 mcpServers:
   clickhouse:
-    type: streamable-http
-    url: http://host.docker.internal:8000/mcp
+    type: sse
+    url: http://host.docker.internal:8001/sse
     timeout: 60000
     serverInstructions: true
