@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import BaseModel
@@ -18,6 +19,11 @@ from conversation_agent.query_builders import (
 if TYPE_CHECKING:
     from agno.tools.mcp import MCPTools
 
+_FENCE_RE = re.compile(
+    r"^\s*```(?:json|sql)?\s*\n?(.*?)\n?\s*```\s*$",
+    re.DOTALL | re.IGNORECASE,
+)
+
 
 def _parse_viz(content: Any) -> VizSpec:
     if isinstance(content, VizSpec):
@@ -29,6 +35,95 @@ def _parse_viz(content: Any) -> VizSpec:
     if isinstance(content, str):
         return VizSpec.model_validate(json.loads(content))
     raise TypeError(f"Cannot parse VizSpec from {type(content)}")
+
+
+def _strip_markdown_fence(text: str) -> str:
+    raw = text.strip()
+    matched = _FENCE_RE.match(raw)
+    if matched:
+        return matched.group(1).strip()
+    # Partial fence (opening only) — common when model truncates
+    if raw.startswith("```"):
+        lines = raw.split("\n", 1)
+        body = lines[1] if len(lines) > 1 else ""
+        body = body.strip()
+        if body.endswith("```"):
+            body = body[: -3].rstrip()
+        return body
+    return raw
+
+
+def _json_object_slice(text: str) -> str:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+    return text
+
+
+def _extract_sql_field(text: str) -> str | None:
+    """Pull QuerySpec.sql when JSON is invalid (e.g. LLM used \\')."""
+    marker = re.search(r'"sql"\s*:\s*"', text)
+    if not marker:
+        return None
+    i = marker.end()
+    out: list[str] = []
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and i + 1 < len(text):
+            nxt = text[i + 1]
+            escapes = {
+                "n": "\n",
+                "t": "\t",
+                "r": "\r",
+                '"': '"',
+                "\\": "\\",
+                "/": "/",
+                "'": "'",  # invalid JSON, but models emit it
+            }
+            out.append(escapes.get(nxt, nxt))
+            i += 2
+            continue
+        if ch == '"':
+            break
+        out.append(ch)
+        i += 1
+    sql = "".join(out).strip()
+    return sql or None
+
+
+def _coerce_query_spec(content: Any) -> QuerySpec:
+    """Accept QuerySpec / dict / messy markdown+JSON string from generate_query."""
+    if isinstance(content, QuerySpec):
+        return content
+    if isinstance(content, BaseModel):
+        return QuerySpec.model_validate(content.model_dump())
+    if isinstance(content, dict):
+        return QuerySpec.model_validate(content)
+    if not isinstance(content, str):
+        raise TypeError(f"LLM returned unexpected type: {type(content)}")
+
+    text = _strip_markdown_fence(content)
+    candidate = _json_object_slice(text)
+
+    for payload in (
+        candidate,
+        # Models often put \\' inside JSON strings (invalid) — soften to '
+        candidate.replace("\\'", "'"),
+    ):
+        try:
+            return QuerySpec.model_validate(json.loads(payload))
+        except Exception:  # noqa: BLE001
+            pass
+
+    sql = _extract_sql_field(candidate) or _extract_sql_field(text)
+    if sql:
+        return QuerySpec(sql=sql)
+
+    raise ValueError(
+        "Could not coerce generate_query output to QuerySpec "
+        f"(preview={content[:240]!r})"
+    )
 
 
 def run_deterministic(plan: AnalyticsPlan) -> ExecuteResult:
@@ -63,17 +158,7 @@ async def run_llm_mcp_fallback(
     if user_question:
         prompt_parts.insert(0, f"User question: {user_question}")
     run = await agent.arun("\n\n".join(prompt_parts))
-    content = run.content
-    if isinstance(content, QuerySpec):
-        spec = content
-    elif isinstance(content, BaseModel):
-        spec = QuerySpec.model_validate(content.model_dump())
-    elif isinstance(content, dict):
-        spec = QuerySpec.model_validate(content)
-    elif isinstance(content, str):
-        spec = QuerySpec.model_validate(json.loads(content))
-    else:
-        raise TypeError(f"LLM returned unexpected type: {type(content)}")
+    spec = _coerce_query_spec(run.content)
 
     sql = (spec.sql or "").strip()
     if not sql:
@@ -132,7 +217,7 @@ async def run_analytics(
                 raise ValueError("Provide viz or plan")
             return run_deterministic(plan_obj)
         except Exception as exc:  # noqa: BLE001
-            reason = str(exc)
+            reason = str(exc) or repr(exc)
     else:
         reason = "force_fallback"
 
@@ -172,12 +257,13 @@ async def run_analytics(
             reason=reason or "deterministic_failed",
         )
     except Exception as exc:  # noqa: BLE001
+        detail = str(exc).strip() or repr(exc)
         return ExecuteResult(
             sql="",
             columns=[],
             rows=[],
             row_count=0,
-            error=f"Fallback also failed: {exc}",
+            error=f"Fallback also failed: {detail}",
             path="failed",
             fallback_reason=reason,
         )

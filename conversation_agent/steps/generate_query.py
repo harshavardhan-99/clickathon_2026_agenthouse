@@ -26,11 +26,13 @@ BASE_INSTRUCTIONS = [
     "Follow the ClickHouse Activity Schema skill below in full before writing SQL.",
     f"CRITICAL: Always query {_FQN}. Do not use FROM events, funnel_events, or "
     "UNION per-event tables. Filter / windowFunnel conditions use `event_name`; "
-    "time column is `timestamp`. Envelope segments: device_type, os, "
-    "geoip_country_code, destination. Payload fields live in `event_info` "
-    "(use JSONExtract* when needed).",
-    f"For conversion funnels use windowFunnel() on {_FQN} (correct partition "
-    "key, window unit comment, ordered event_name conditions, cumulative countIf).",
+    "time column is `timestamp` (DateTime64(3)). Envelope segments: device_type, "
+    "os, geoip_country_code, destination. Payload fields live in `event_info` / "
+    "`payload` (use JSONExtract* when needed).",
+    f"For conversion funnels use windowFunnel() on {_FQN} with "
+    "toDateTime(timestamp) as the time arg (DateTime64 is illegal for "
+    "windowFunnel). Comment window unit in seconds; ordered event_name "
+    "conditions; cumulative countIf.",
     "Emit exactly one SELECT (or WITH … SELECT) in QuerySpec.sql — no tools, do not execute.",
     "Prefer SQL that returns step / entities / conversion_from_start "
     "(plus segment_value when VizSpec asks for a segment cut).",
