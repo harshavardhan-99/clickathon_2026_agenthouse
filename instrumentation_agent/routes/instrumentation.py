@@ -5,7 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from instrumentation_agent.agent.orchestration import run_instrumentation_agent
-from instrumentation_agent.interfaces.instrumentation import get_registry
+from instrumentation_agent.interfaces.instrumentation import (
+    get_registry,
+    validate_instrument_request,
+)
 from instrumentation_agent.models.schemas import (
     InstrumentRequest,
     InstrumentResponse,
@@ -27,6 +30,7 @@ def read_registry(feature_id: str) -> RegistryResponse:
 def instrument(body: InstrumentRequest) -> InstrumentResponse:
     """Run the Instrumentation Agno workflow on a dataset path + spec.md (or feature_id)."""
     try:
+        validate_instrument_request(body)
         return run_instrumentation_agent(body)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

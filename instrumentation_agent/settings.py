@@ -26,12 +26,13 @@ class Settings(BaseSettings):
     clickhouse_port: int = 8443
     clickhouse_user: str = "default"
     clickhouse_password: str = ""
-    clickhouse_database: str = "default"
+    # Contest / shared warehouse DB (not ClickHouse's built-in `default`).
+    clickhouse_database: str = "atlys"
     clickhouse_secure: bool = True
 
     # Agno reads GOOGLE_API_KEY from the environment; model id is configurable.
     google_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
 
 
 @lru_cache

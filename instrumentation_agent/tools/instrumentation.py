@@ -22,23 +22,19 @@ class InstrumentationTools(Toolkit):
     def instrument_dataset(
         self,
         feature_id: str = "",
-        dataset_path: str = "",
         spec_path: str = "",
     ) -> str:
-        """Instrument a feature pack: spec.md + events.ndjson → ClickHouse + Postgres.
+        """Instrument a feature pack: spec.md (+ optional sibling events.ndjson).
 
-        Prefer evidence from NDJSON (do not invent columns). One table per event,
-        ORDER BY time+segment keys, PARTITION BY month on timestamp.
+        Prefer evidence from NDJSON when present (do not invent columns). One table
+        per event, ORDER BY time+segment keys, PARTITION BY month on timestamp.
 
         Args:
-            feature_id: Feature id (defaults to dataset folder name when empty).
-            dataset_path: Directory with events.ndjson (and spec.md unless spec_path set).
-                Empty string means use SPECS_ROOT/{feature_id}/.
-            spec_path: Optional explicit path to spec.md.
+            feature_id: Feature id (defaults to parent folder of spec.md when empty).
+            spec_path: Path to spec.md. Empty string means SPECS_ROOT/{feature_id}/spec.md.
         """
         return instrument_feature(
             feature_id or None,
-            dataset_path=dataset_path or None,
             spec_path=spec_path or None,
         ).model_dump_json()
 

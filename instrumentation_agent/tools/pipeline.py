@@ -29,13 +29,28 @@ class PipelineTools(Toolkit):
         Args:
             feature_id: Feature id to look up.
         """
+        print("inspect_existing_pipeline", feature_id)
+        from instrumentation_agent.interfaces.instrumentation import get_registry
+
+        # Look up the feature in the metadata registry (MetaFeaturesCRUD via get_registry)
+        registry = get_registry(feature_id)
+        exists = registry.feature is not None
+        status = "found" if exists else "not_found"
+        message = (
+            f"Existing pipeline found in meta_features for feature_id={feature_id}."
+            if exists
+            else "No existing pipeline registered (mock)."
+        )
+        print("message", message)
+        print("END inspect_existing_pipeline")
         return json.dumps(
             {
                 "mock": True,
                 "feature_id": feature_id,
-                "exists": False,
-                "status": "not_found",
-                "message": "No existing pipeline registered (mock).",
+                "exists": exists,
+                "status": status,
+                "message": message,
+                "event_count": len(registry.events),
             }
         )
 

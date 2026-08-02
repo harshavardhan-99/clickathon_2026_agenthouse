@@ -5,7 +5,9 @@ See https://docs.agno.com/workflows/overview
 Steps:
 1. Load ``spec.md`` (+ path context) as a **string** prompt for the next agent.
 2. Summarize the spec into structured event / feature metadata JSON.
-3. Use that metadata + mocked pipeline tools to decide create / update / skip.
+3. Register missing ``meta_features`` / ``meta_events`` rows from that JSON.
+4. When meta context changed: create ClickHouse event tables + activity_events MVs,
+   then publish a living-context version via Context ``publish_context_version``.
 """
 
 from __future__ import annotations
@@ -19,8 +21,12 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.workflow import Step, StepInput, StepOutput, Workflow
+from agno.workflow import Condition, Step, StepInput, StepOutput, Workflow
 
+from instrumentation_agent.interfaces.instrumentation import (
+    apply_clickhouse_from_meta,
+    register_meta_from_summary,
+)
 from instrumentation_agent.models.schemas import (
     EventSummary,
     FeatureSpecMetadata,
@@ -29,7 +35,6 @@ from instrumentation_agent.models.schemas import (
     PipelinePlan,
 )
 from instrumentation_agent.settings import get_settings
-from instrumentation_agent.tools.pipeline import PipelineTools
 from instrumentation_agent.utils.paths import resolve_feature_paths
 
 _SUMMARIZE_INSTRUCTIONS = """\
@@ -45,24 +50,9 @@ Rules:
 - Do NOT invent columns that are not hinted by the spec; expected_columns may be empty.
 - Always include the shared join envelope in join_keys when present in contest guidance:
   user_id, application_id, device_type, os, geoip_country_code, destination, timestamp.
+- the other columns are not in the join_keys must be added to the expected_columns
 - feature_id must match the provided feature_id.
 """
-
-_PIPELINE_INSTRUCTIONS = """\
-You are the Pipeline Planner for Atlys AgentHouse (Click-a-thon).
-
-You receive structured FeatureSpecMetadata JSON from the previous step.
-Decide whether to build a new pipeline, update an existing one, or skip.
-
-You MUST call exactly one of these mocked tools after inspecting state:
-1. inspect_existing_pipeline(feature_id) — always call this first.
-2. Then choose ONE of: create_pipeline | update_pipeline | skip_pipeline.
-
-When calling create/update, pass the event names from the metadata journey.
-After tools return, output a PipelinePlan JSON matching the schema.
-The tools are mocked stubs for now — treat their JSON responses as authoritative.
-"""
-
 
 def _ensure_google_api_key() -> None:
     settings = get_settings()
@@ -75,21 +65,57 @@ def _gemini() -> Gemini:
     return Gemini(id=settings.gemini_model, api_key=settings.google_api_key or None)
 
 
+def _format_step_value(value: object) -> str:
+    if value is None:
+        return "<none>"
+    if hasattr(value, "model_dump_json"):
+        return value.model_dump_json(indent=2)  # type: ignore[no-any-return]
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, indent=2, default=str)
+    return str(value)
+
+
+def _log_step_io(step_name: str, direction: str, value: object) -> None:
+    print(f"===== {direction} {step_name} =====")
+    print(_format_step_value(value))
+    print(f"===== END {direction} {step_name} =====")
+
+
+def _agent_message(value: object) -> str:
+    """Coerce step content to a string so Gemini never sees a bare dict/Message."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "model_dump_json"):
+        return value.model_dump_json(indent=2)  # type: ignore[no-any-return]
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, indent=2, default=str)
+    return str(value)
+
+
 def load_spec_inputs(step_input: StepInput) -> StepOutput:
     """Resolve dataset/spec paths and load ``spec.md`` for the summarizer.
 
     Important: Agno agent steps treat dict inputs as ``Message`` objects (require
     ``role``). Always return a **string** so Gemini receives valid contents.
     """
+    _log_step_io(
+        "load_spec",
+        "IN",
+        {
+            "input": step_input.input,
+            "additional_data": step_input.additional_data,
+        },
+    )
+
     payload = _as_dict(step_input.input)
     extra = step_input.additional_data or {}
     feature_id = payload.get("feature_id") or extra.get("feature_id")
-    dataset_path = payload.get("dataset_path") or extra.get("dataset_path")
     spec_path = payload.get("spec_path") or extra.get("spec_path")
 
     paths = resolve_feature_paths(
         feature_id=feature_id,
-        dataset_path=dataset_path,
         spec_path=spec_path,
     )
     paths.require_exists()
@@ -99,50 +125,244 @@ def load_spec_inputs(step_input: StepInput) -> StepOutput:
     prompt = (
         f"Summarize this feature pack into FeatureSpecMetadata JSON.\n\n"
         f"feature_id: {paths.feature_id}\n"
-        f"dataset_path: {paths.feature_dir}\n"
         f"spec_path: {paths.spec_path}\n"
-        f"events_path: {paths.events_path}\n\n"
         f"=== spec.md ===\n{spec_text}\n"
     )
 
     print("START prompt")
     print("prompt", prompt)
     print("END prompt")
-    
+
+    _log_step_io("load_spec", "OUT", prompt)
     return StepOutput(content=prompt)
 
 
-@lru_cache
-def get_instrumentation_workflow() -> Workflow:
-    """Build the Instrumentation workflow (cached)."""
-    _ensure_google_api_key()
 
-    summarize_agent = Agent(
+
+
+@lru_cache
+def get_summarize_agent() -> Agent:
+    _ensure_google_api_key()
+    return Agent(
         name="SpecMetadata",
         model=_gemini(),
         instructions=_SUMMARIZE_INSTRUCTIONS,
         output_schema=FeatureSpecMetadata,
         markdown=False,
     )
-    pipeline_agent = Agent(
-        name="PipelinePlanner",
-        model=_gemini(),
-        tools=[PipelineTools()],
-        instructions=_PIPELINE_INSTRUCTIONS,
-        output_schema=PipelinePlan,
-        markdown=False,
-    )
 
+
+def _make_summarize_spec(agent: Agent):
+    def summarize_spec(step_input: StepInput) -> StepOutput:
+        inbound = step_input.previous_step_content or step_input.input
+        _log_step_io("summarize_spec", "IN", inbound)
+        message = _agent_message(inbound)
+        run = agent.run(message)
+        content = run.content
+        _log_step_io("summarize_spec", "OUT", content)
+        return StepOutput(content=content)
+
+    return summarize_spec
+
+
+def _metadata_from_register_payload(inbound: object) -> FeatureSpecMetadata | None:
+    """Extract FeatureSpecMetadata from register_meta dict or bare metadata."""
+    if isinstance(inbound, dict) and "metadata" in inbound:
+        return _parse_model(inbound.get("metadata"), FeatureSpecMetadata)
+    return _parse_model(inbound, FeatureSpecMetadata)
+
+
+def _context_added_from_payload(inbound: object) -> bool:
+    if isinstance(inbound, dict) and "context_added" in inbound:
+        return bool(inbound.get("context_added"))
+    return False
+
+
+def register_meta(step_input: StepInput) -> StepOutput:
+    """Ensure Postgres meta registry has the feature + any missing events.
+
+    Output includes ``context_added`` so ClickHouse apply runs only when meta changed.
+    """
+    inbound = step_input.previous_step_content or step_input.input
+    _log_step_io("register_meta", "IN", inbound)
+
+    metadata = _parse_model(inbound, FeatureSpecMetadata)
+    if metadata is None:
+        raise RuntimeError(
+            "register_meta requires FeatureSpecMetadata from summarize_spec; "
+            f"got {type(inbound).__name__}"
+        )
+
+    extra = step_input.additional_data or {}
+    paths = resolve_feature_paths(
+        feature_id=metadata.feature_id or extra.get("feature_id"),
+        spec_path=extra.get("spec_path"),
+    )
+    result = register_meta_from_summary(
+        metadata,
+        spec_path=paths.spec_path,
+    )
+    context_added = bool(result.get("context_added"))
+    payload = {
+        "context_added": context_added,
+        "feature_created": result.get("feature_created", False),
+        "events_created": result.get("events_created", []),
+        "events_linked": result.get("events_linked", []),
+        "metadata": metadata,
+    }
+    _log_step_io("register_meta", "OUT", payload)
+    return StepOutput(content=payload)
+
+
+def _should_apply_clickhouse(step_input: StepInput) -> bool:
+    """True when register_meta added a feature and/or event context."""
+    inbound = step_input.previous_step_content
+    if inbound is None:
+        inbound = step_input.get_step_content("register_meta")
+    return _context_added_from_payload(inbound)
+
+
+def apply_clickhouse(step_input: StepInput) -> StepOutput:
+    """Create event tables + MVs into ``activity_events`` from ``meta_events``."""
+    inbound = step_input.previous_step_content or step_input.input
+    _log_step_io("apply_clickhouse", "IN", inbound)
+
+    metadata = _metadata_from_register_payload(inbound)
+    if metadata is None:
+        raise RuntimeError(
+            "apply_clickhouse requires FeatureSpecMetadata from register_meta; "
+            f"got {type(inbound).__name__}"
+        )
+
+    plan = apply_clickhouse_from_meta(metadata.feature_id)
+    _log_step_io("apply_clickhouse", "OUT", plan)
+    return StepOutput(content=plan)
+
+
+def skip_clickhouse(step_input: StepInput) -> StepOutput:
+    """No-op when register_meta made no feature/event changes."""
+    inbound = step_input.previous_step_content or step_input.input
+    metadata = _metadata_from_register_payload(inbound)
+    feature_id = metadata.feature_id if metadata is not None else "unknown"
+    plan = PipelinePlan(
+        action="skip_pipeline",
+        rationale=(
+            "No new feature or event meta was registered "
+            "(context_added=false); ClickHouse pipeline left unchanged."
+        ),
+        feature_id=feature_id,
+        events_to_materialize=[],
+        pipeline_changes=[],
+        tool_choices=[],
+    )
+    _log_step_io("skip_clickhouse", "OUT", plan)
+    return StepOutput(content=plan)
+
+
+def _jsonable(value: object) -> Any:
+    """Serialize step content for ``workflow_json`` (models → dicts)."""
+    if value is None:
+        return None
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def publish_context(step_input: StepInput) -> StepOutput:
+    """Publish living context via Context ``publish_context_version`` tool.
+
+    Runs only on the ClickHouse-apply branch. Supplies workflow outputs
+    (register_meta + apply_clickhouse plan) to the tool as ``workflow_json``.
+    """
+    from context_agent import get_context_catalog_tools
+
+    plan = step_input.previous_step_content or step_input.input
+    register_payload = step_input.get_step_content("register_meta")
+    if register_payload is None:
+        register_payload = step_input.additional_data or {}
+
+    workflow_payload = {
+        "pipeline_plan": _jsonable(plan),
+        "apply_clickhouse": _jsonable(plan),
+        "register_meta": _jsonable(register_payload),
+    }
+    _log_step_io("publish_context", "IN", workflow_payload)
+
+    tools = get_context_catalog_tools()
+    result_json = tools.publish_context_version(
+        workflow_json=json.dumps(workflow_payload, default=str),
+    )
+    try:
+        result = json.loads(result_json)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"publish_context_version returned non-JSON: {result_json!r}"
+        ) from exc
+    if isinstance(result, dict) and result.get("error"):
+        raise RuntimeError(f"publish_context_version failed: {result['error']}")
+
+    _log_step_io("publish_context", "OUT", result)
+    return StepOutput(content=result)
+
+
+@lru_cache
+def get_instrumentation_workflow() -> Workflow:
+    """Build the Instrumentation workflow (cached)."""
     return Workflow(
         name="Instrumentation",
         description=(
-            "Summarize spec.md into event metadata JSON, then decide "
-            "create/update/skip pipeline via mocked tools."
+            "Summarize spec.md into event metadata JSON, register "
+            "meta_features/meta_events, then create ClickHouse event tables "
+            "and activity_events materialized views only when meta context changed; "
+            "publish a context version after a successful ClickHouse apply."
         ),
         steps=[
-            Step(name="load_spec", executor=load_spec_inputs),
-            Step(name="summarize_spec", agent=summarize_agent, on_error="fail"),
-            Step(name="plan_pipeline", agent=pipeline_agent, on_error="fail"),
+            Step(name="load_spec", executor=load_spec_inputs, on_error="fail", max_retries=0),
+            Step(
+                name="summarize_spec",
+                executor=_make_summarize_spec(get_summarize_agent()),
+                on_error="fail",
+            ),
+            Step(
+                name="register_meta",
+                executor=register_meta,
+                on_error="fail",
+                max_retries=0,
+            ),
+            Condition(
+                name="apply_clickhouse_if_context_added",
+                description=(
+                    "Run ClickHouse DDL/MVs + publish_context_version only when "
+                    "register_meta added a feature and/or event context."
+                ),
+                evaluator=_should_apply_clickhouse,
+                steps=[
+                    Step(
+                        name="apply_clickhouse",
+                        executor=apply_clickhouse,
+                        on_error="fail",
+                        max_retries=0,
+                    ),
+                    Step(
+                        name="publish_context",
+                        executor=publish_context,
+                        on_error="fail",
+                        max_retries=0,
+                    ),
+                ],
+                else_steps=[
+                    Step(
+                        name="skip_clickhouse",
+                        executor=skip_clickhouse,
+                        on_error="fail",
+                        max_retries=0,
+                    ),
+                ],
+            ),
         ],
     )
 
@@ -157,6 +377,7 @@ def run_instrumentation_agent(request: InstrumentRequest) -> InstrumentResponse:
             "https://aistudio.google.com/apikey to .env"
         )
 
+    get_summarize_agent.cache_clear()
     get_instrumentation_workflow.cache_clear()
     workflow = get_instrumentation_workflow()
 
@@ -164,15 +385,33 @@ def run_instrumentation_agent(request: InstrumentRequest) -> InstrumentResponse:
     run = workflow.run(
         input=(
             "Load the feature pack, summarize spec.md into FeatureSpecMetadata, "
-            "then plan the instrumentation pipeline with the mocked tools."
+            "register Postgres meta, then create ClickHouse tables and "
+            "activity_events materialized views."
         ),
         additional_data={
             "feature_id": request.feature_id,
-            "dataset_path": request.dataset_path,
             "spec_path": request.spec_path,
         },
     )
     return _response_from_workflow(run, request)
+
+
+def _step_failure_detail(step: object) -> str:
+    """Surface nested Condition/Router child errors, not just the summary content."""
+    nested = list(getattr(step, "steps", None) or [])
+    child_errors = []
+    for child in nested:
+        if getattr(child, "success", True) is False:
+            child_name = getattr(child, "step_name", "step")
+            child_err = (
+                getattr(child, "error", None)
+                or getattr(child, "content", None)
+                or "unknown error"
+            )
+            child_errors.append(f"{child_name}: {child_err}")
+    if child_errors:
+        return "; ".join(child_errors)
+    return str(getattr(step, "error", None) or getattr(step, "content", None) or "unknown error")
 
 
 def _response_from_workflow(
@@ -191,7 +430,7 @@ def _response_from_workflow(
     for step in step_results:
         if getattr(step, "success", True) is False:
             name = getattr(step, "step_name", "step")
-            err = getattr(step, "error", None) or getattr(step, "content", None)
+            err = _step_failure_detail(step)
             raise RuntimeError(f"Workflow step '{name}' failed: {err}")
 
     by_name = {
@@ -207,15 +446,37 @@ def _response_from_workflow(
             if line.startswith("feature_id:"):
                 feature_id = line.split(":", 1)[1].strip() or feature_id
                 break
-    if not feature_id and request.dataset_path:
-        feature_id = Path(request.dataset_path).name
+    if not feature_id and request.spec_path:
+        feature_id = Path(request.spec_path).parent.name
     feature_id = feature_id or "unknown"
 
     spec_metadata = _parse_model(by_name.get("summarize_spec"), FeatureSpecMetadata)
     if spec_metadata is None:
+        reg_payload = by_name.get("register_meta")
+        if isinstance(reg_payload, dict) and "metadata" in reg_payload:
+            spec_metadata = _parse_model(reg_payload.get("metadata"), FeatureSpecMetadata)
+        else:
+            spec_metadata = _parse_model(reg_payload, FeatureSpecMetadata)
+    if spec_metadata is None:
         spec_metadata = _parse_model(getattr(run, "content", None), FeatureSpecMetadata)
 
-    pipeline_plan = _parse_model(by_name.get("plan_pipeline"), PipelinePlan)
+    # Condition nests apply/skip; also scan nested step_results.
+    pipeline_plan = _parse_model(by_name.get("apply_clickhouse"), PipelinePlan)
+    if pipeline_plan is None:
+        pipeline_plan = _parse_model(by_name.get("skip_clickhouse"), PipelinePlan)
+    if pipeline_plan is None:
+        for step in step_results:
+            nested = list(getattr(step, "steps", None) or [])
+            for child in nested:
+                name = getattr(child, "step_name", None)
+                if name in {"apply_clickhouse", "skip_clickhouse"}:
+                    pipeline_plan = _parse_model(
+                        getattr(child, "content", None), PipelinePlan
+                    )
+                    if pipeline_plan is not None:
+                        break
+            if pipeline_plan is not None:
+                break
     if pipeline_plan is None:
         pipeline_plan = _parse_model(getattr(run, "content", None), PipelinePlan)
 

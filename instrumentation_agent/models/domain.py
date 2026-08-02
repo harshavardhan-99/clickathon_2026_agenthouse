@@ -34,10 +34,7 @@ class FeaturePaths:
     feature_id: str
     feature_dir: Path
     spec_path: Path
-    events_path: Path
 
     def require_exists(self) -> None:
-        missing = [p for p in (self.spec_path, self.events_path) if not p.is_file()]
-        if missing:
-            names = ", ".join(str(p) for p in missing)
-            raise FileNotFoundError(f"feature inputs missing: {names}")
+        if not self.spec_path.is_file():
+            raise FileNotFoundError(f"feature inputs missing: {self.spec_path}")

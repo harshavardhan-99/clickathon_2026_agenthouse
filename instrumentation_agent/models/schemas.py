@@ -8,29 +8,25 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class InstrumentRequest(BaseModel):
-    """Instrument a feature pack: dataset directory + spec.md (skill inputs)."""
+    """Instrument a feature: ``feature_id`` and/or path to ``spec.md``."""
 
     feature_id: str | None = Field(
         default=None,
-        description="Feature id (defaults to dataset folder name).",
+        description="Feature id (defaults to parent folder of spec.md).",
         examples=["01_express_checkout"],
-    )
-    dataset_path: str | None = Field(
-        default=None,
-        description=(
-            "Directory containing events.ndjson (and spec.md unless spec_path is set). "
-            "If omitted, uses SPECS_ROOT/{feature_id}/."
-        ),
     )
     spec_path: str | None = Field(
         default=None,
-        description="Optional explicit path to spec.md; default is {dataset_path}/spec.md.",
+        description=(
+            "Path to spec.md. Required when feature_id is not in the metadata registry "
+            "and SPECS_ROOT/{feature_id}/spec.md is missing."
+        ),
     )
 
     @model_validator(mode="after")
-    def require_feature_or_dataset(self) -> Self:
-        if not self.feature_id and not self.dataset_path:
-            raise ValueError("Provide feature_id and/or dataset_path")
+    def require_feature_or_spec(self) -> Self:
+        if not self.feature_id and not self.spec_path:
+            raise ValueError("Provide feature_id and/or spec_path")
         return self
 
 

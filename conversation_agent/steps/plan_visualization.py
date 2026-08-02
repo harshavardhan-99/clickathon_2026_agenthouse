@@ -1,0 +1,54 @@
+"""Step: plan_visualization — SchemaContext → VizSpec (no tools)."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from agno.agent import Agent
+from agno.workflow import Step
+
+from conversation_agent import config
+from conversation_agent.models import VizSpec
+from conversation_agent.shared import agent_trace_metadata, build_model, setup_langfuse
+
+STEP_NAME = "plan_visualization"
+
+INSTRUCTIONS = [
+    "You plan one visualization from a SchemaContext (tables, columns, event names) "
+    "and the user's analytics question.",
+    "Only use fields present in the schema / catalog. Do not invent columns or events.",
+    "Physical fact table is the Single Activity Schema (activity_events): filter on "
+    "event_name; segment on device_type / os / geoip_country_code / destination; "
+    "payload metrics may need event_info JSON keys when listed in schema.",
+    "Return a VizSpec JSON with: kind (visualization type), optional title, "
+    "metric_names, dimensions, event_names, time_window, rationale.",
+    "Viz kind — pick the best fit among: "
+    "timeseries, breakdown, comparison, table, funnel, metric, top_n.",
+    "Prefer segment dimensions already in the envelope when relevant "
+    "(device_type, geoip_country_code, destination, os).",
+]
+
+
+def build_agent(*, db: Any = None) -> Agent:
+    setup_langfuse()
+    return Agent(
+        id=f"{config.AGENT_ID}-plan-visualization",
+        name="Plan Visualization",
+        model=build_model(),
+        tools=[],
+        db=db,
+        instructions=list(INSTRUCTIONS),
+        output_schema=VizSpec,
+        use_json_mode=True,
+        markdown=False,
+        add_history_to_context=False,
+        metadata=agent_trace_metadata(step=STEP_NAME),
+    )
+
+
+def build_step(*, db: Any = None) -> Step:
+    return Step(
+        name=STEP_NAME,
+        description="Choose visualization type and params from schema",
+        agent=build_agent(db=db),
+    )
