@@ -25,6 +25,7 @@ WORKFLOW_STEP_NAMES = (
     "run_analytics",
     "generate_query",
     "execute",
+    "context_agent",
 )
 
 
@@ -161,8 +162,15 @@ def model_trace_labels() -> dict[str, str]:
     }
 
 
-def setup_langfuse() -> None:
-    """Instrument Agno → OpenTelemetry → Langfuse (idempotent)."""
+DEFAULT_LANGFUSE_SERVICE_NAME = "clickathon-visualization-agent"
+
+
+def setup_langfuse(*, service_name: str = DEFAULT_LANGFUSE_SERVICE_NAME) -> None:
+    """Instrument Agno → OpenTelemetry → Langfuse (idempotent).
+
+    ``service_name`` becomes the OTEL/Langfuse service name so Context vs
+    Conversation CLI runs are filterable. First successful call in a process wins.
+    """
     global _langfuse_ready
     if _langfuse_ready or not getattr(config, "LANGFUSE_ENABLED", True):
         return
@@ -180,6 +188,7 @@ def setup_langfuse() -> None:
 
     labels = model_trace_labels()
     environment = config.LANGFUSE_TRACING_ENVIRONMENT or "agno-dev"
+    resolved_service = (service_name or DEFAULT_LANGFUSE_SERVICE_NAME).strip()
     llm_system = {
         "claude": "anthropic",
         "gemini": "google",
@@ -192,6 +201,10 @@ def setup_langfuse() -> None:
             span.set_attribute("langfuse.environment", environment)
             span.set_attribute("deployment.environment", environment)
             span.set_attribute("deployment.environment.name", environment)
+            span.set_attribute("langfuse.trace.metadata.service", resolved_service)
+            span.set_attribute(
+                "langfuse.observation.metadata.service", resolved_service
+            )
             span.set_attribute("langfuse.trace.metadata.model_provider", labels["model_provider"])
             span.set_attribute("langfuse.trace.metadata.model_id", labels["model_id"])
             span.set_attribute("langfuse.trace.metadata.model", labels["model"])
@@ -209,10 +222,9 @@ def setup_langfuse() -> None:
             if step:
                 span.set_attribute("langfuse.observation.metadata.step", step)
                 span.set_attribute("langfuse.trace.metadata.step", step)
-            span.set_attribute(
-                "langfuse.trace.tags",
-                langfuse_base_tags(step=step),
-            )
+            tags = langfuse_base_tags(step=step)
+            tags.append(resolved_service)
+            span.set_attribute("langfuse.trace.tags", tags)
 
         def on_end(self, span: ReadableSpan) -> None:
             return None
@@ -228,7 +240,9 @@ def setup_langfuse() -> None:
     os.environ["LANGFUSE_HOST"] = config.LANGFUSE_BASE_URL
     os.environ["LANGFUSE_BASE_URL"] = config.LANGFUSE_BASE_URL
     os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = environment
-    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = f"langfuse.environment={environment}"
+    os.environ["OTEL_RESOURCE_ATTRIBUTES"] = (
+        f"langfuse.environment={environment},service.name={resolved_service}"
+    )
 
     auth = base64.b64encode(
         f"{config.LANGFUSE_PUBLIC_KEY}:{config.LANGFUSE_SECRET_KEY}".encode()
@@ -245,7 +259,7 @@ def setup_langfuse() -> None:
                 "langfuse.environment": environment,
                 "deployment.environment": environment,
                 "deployment.environment.name": environment,
-                "service.name": "clickathon-visualization-agent",
+                "service.name": resolved_service,
             }
         )
     )

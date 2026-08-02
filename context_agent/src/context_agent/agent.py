@@ -17,6 +17,7 @@ from conversation_agent.shared import (
 
 AGENT_ID = "context-agent"
 AGENT_NAME = "Context Agent"
+LANGFUSE_SERVICE_NAME = "clickathon-context-agent"
 
 INSTRUCTIONS = [
     "You are the Atlys Context Agent. You explain the living business context "
@@ -39,7 +40,7 @@ INSTRUCTIONS = [
 
 def build_agent(*, db: Any = None) -> Agent:
     """Build the read-only Context Agent (catalog tools only)."""
-    setup_langfuse()
+    setup_langfuse(service_name=LANGFUSE_SERVICE_NAME)
     return Agent(
         id=AGENT_ID,
         name=AGENT_NAME,

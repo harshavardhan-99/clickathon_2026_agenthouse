@@ -30,7 +30,11 @@ from agno.workflow import Step, Workflow
 from pydantic import BaseModel
 
 from conversation_agent import config
-from conversation_agent.shared import build_mcp_tools, setup_langfuse
+from conversation_agent.shared import (
+    DEFAULT_LANGFUSE_SERVICE_NAME,
+    build_mcp_tools,
+    setup_langfuse,
+)
 from conversation_agent.steps import (
     discover_schema,
     plan_visualization,
@@ -52,7 +56,7 @@ def build_visualization_workflow(
     mcp_tools: MCPTools | None = None,
 ) -> Workflow:
     """Assemble the Visualization Agent workflow (schema → plan → analytics)."""
-    setup_langfuse()
+    setup_langfuse(service_name=DEFAULT_LANGFUSE_SERVICE_NAME)
     return Workflow(
         id=config.WORKFLOW_ID,
         name=config.AGENT_NAME,
