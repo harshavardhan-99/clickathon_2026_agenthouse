@@ -2,7 +2,8 @@
 
 **Context owns `context_*`. Instrumentation owns `meta_*`.**  
 ClickHouse = event facts. Postgres = registry + living business meaning.  
-No Agno agent in this package — Context is a **library** of deterministic tools for Conversation (and optional publish APIs).
+No Agno agent for *writes* — publish stays on seed / Instrumentation.  
+A **read-only** Agno Context Agent answers catalog questions (`python -m context_agent`).
 
 | Writer | Tables | DDL |
 |--------|--------|-----|

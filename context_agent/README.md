@@ -1,8 +1,8 @@
-# Context Agent (catalog library)
+# Context Agent (catalog library + read-only Agno agent)
 
-Maintains the **living business context layer** in **Postgres** and exposes it as a
-**library of two deterministic tools** for Instrumentation / Conversation / others.
-There is **no Agno agent** in this package — other agents import the tools.
+Maintains the **living business context layer** in **Postgres** and exposes it as
+deterministic tools. A **read-only Agno Context Agent** answers questions using
+those tools (no publish).
 
 Parent overview: [`../README.md`](../README.md) · Table design: [`TABLES.md`](./TABLES.md)
 
@@ -10,52 +10,49 @@ Parent overview: [`../README.md`](../README.md) · Table design: [`TABLES.md`](.
 
 ```
 Instrumentation writes meta_features / meta_events → Postgres
-Context publishes context_versions / context_items → Postgres
+Scripts / Instrumentation publish context_versions / context_items
         │
         ▼
   get_latest_context_items()   → meaning (context_*)
   get_feature_meta(feature_id) → journey + per-event ch_table + payload columns
-  publish_context_version(...) → new context version (copy-forward + deltas)
+  publish_context_version(...) → writers only (seed / Instrumentation)
         │
         ▼
-  Imported by Conversation (SAS builders on activity_events)
+  Context Agent (read-only)  ·  Conversation discover_schema
 ```
 
-## The 3 tools
+## Read-only Context Agent
+
+```bash
+uv run python -m context_agent \
+  "What is the current context version and core pre-purchase funnel?"
+
+uv run python -m context_agent \
+  "Summarize the unseen_data coupon journey from feature meta"
+```
+
+Agent tools: `get_latest_context_items`, `get_feature_meta` via `get_context_read_tools()`.
+
+## The catalog tools
 
 | Tool | Purpose |
 |------|---------|
 | `get_latest_context_items` | Current `context_version` + `context_items` |
 | `get_feature_meta(feature_id)` | `meta_features` + `meta_events` (Instrumentation) |
-| `publish_context_version` | New version: copy-forward + upserts/deletes |
+| `publish_context_version` | New version: copy-forward + upserts/deletes (not on Context Agent) |
 
 ```python
 from context_agent import (
-    get_context_catalog_tools,  # Agno Toolkit for another agent
-    get_latest_context_items,   # direct call
+    get_context_catalog_tools,  # Agno Toolkit: read + publish
+    get_context_read_tools,     # Agno Toolkit: read-only
+    get_latest_context_items,
     get_feature_meta,
     publish_context_version,
+    build_agent,
 )
 
-# Inside Conversation / other agent:
-tools = [get_context_catalog_tools()]
-
-# Or without Agno:
-bundle = get_latest_context_items()
-meta = get_feature_meta("01_express_checkout")
-publish_context_version(
-    context_version="v1",
-    source="seed",
-    summary="Bootstrap from base context",
-    upserts=[
-        {
-            "kind": "entity",
-            "item_key": "user",
-            "label": "Traveller",
-            "payload": {"primary_id_field": "user_id"},
-        }
-    ],
-)
+# Context Agent / Conversation discover:
+tools = [get_context_read_tools()]  # or get_context_catalog_tools() when publish needed
 ```
 
 `get_postgres_sql_tools()` is optional admin/debug only.
