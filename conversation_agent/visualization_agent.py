@@ -1,10 +1,11 @@
-"""Visualization Agent workflow: schema → viz plan → run_analytics.
+"""Visualization Agent workflow: schema → VizPlan → multi run_analytics.
 
 Modes:
-    CLI (default):  one-shot prompt → print ExecuteResult JSON
+    CLI (default):  one-shot prompt → print MultiExecuteResult JSON
     AgentOS:        FastAPI surface (connect via os.agno.com)
 
 Analytics: template SQL + clickhouse-connect; fallback LLM generate_query + MCP.
+Plan step may emit 1–5 VizSpecs; each is executed and merged.
 
 Run (CLI):
     python -m conversation_agent.visualization_agent
@@ -85,9 +86,9 @@ def _content_to_dict(content: Any) -> dict[str, Any]:
             parsed = json.loads(content)
             if isinstance(parsed, dict):
                 return parsed
+            return {"content": parsed}
         except json.JSONDecodeError:
             return {"content": content}
-        return {"content": parsed}
     raise TypeError(f"Unexpected workflow content type: {type(content)}")
 
 

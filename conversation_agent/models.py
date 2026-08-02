@@ -45,18 +45,18 @@ class SchemaContext(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — plan_visualization (stub until viz-type structure is finalized)
+# Step 2 — plan_visualization (VizPlan: 1–5 VizSpecs)
 # ---------------------------------------------------------------------------
 
 
 class VizSpec(BaseModel):
-    """Visualization plan — shape is a stub; swap when viz types are defined."""
+    """One visualization / insight plan."""
 
     kind: str = Field(
         ...,
         description=(
-            "Visualization type key (stub). Examples until finalized: "
-            "timeseries, breakdown, comparison, table, funnel"
+            "Visualization type key. Examples: "
+            "timeseries, breakdown, comparison, table, funnel, metric, top_n"
         ),
     )
     title: Optional[str] = Field(None, description="Short chart title")
@@ -79,6 +79,21 @@ class VizSpec(BaseModel):
     rationale: Optional[str] = Field(
         None,
         description="Why this viz type fits the question and schema",
+    )
+
+
+class VizPlan(BaseModel):
+    """One or more VizSpecs that together answer the analytics question."""
+
+    insights: list[VizSpec] = Field(
+        ...,
+        min_length=1,
+        max_length=5,
+        description="Ordered insight plans (1–5)",
+    )
+    summary: Optional[str] = Field(
+        None,
+        description="Brief plan of how these insights answer the question",
     )
 
 
@@ -135,13 +150,36 @@ class ExecuteResult(BaseModel):
     error: Optional[str] = Field(None, description="Error message if execution failed")
     path: Optional[str] = Field(
         None,
-        description="deterministic | llm_mcp_fallback | failed",
+        description="deterministic | llm_mcp_fallback | llm_fallback | failed",
     )
     fallback_reason: Optional[str] = Field(
         None,
         description="Why deterministic path was skipped/failed",
     )
     caveats: Optional[str] = Field(None, description="Builder or LLM caveats")
+
+
+class InsightResult(BaseModel):
+    """One planned insight paired with its execution result."""
+
+    plan: VizSpec
+    result: ExecuteResult
+
+
+class MultiExecuteResult(BaseModel):
+    """Workflow output when plan_visualization returns multiple insights."""
+
+    summary: Optional[str] = Field(
+        None,
+        description="Plan summary from VizPlan (if any)",
+    )
+    insights: list[InsightResult] = Field(default_factory=list)
+    insight_count: int = Field(0, description="Number of insights attempted")
+    success_count: int = Field(0, description="Insights with no execution error")
+    error: Optional[str] = Field(
+        None,
+        description="Set when every insight failed",
+    )
 
 
 # ---------------------------------------------------------------------------
