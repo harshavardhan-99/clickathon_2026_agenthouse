@@ -239,6 +239,18 @@ class AnalyticsQueryResponse(BaseModel):
     meta: Optional[AnalyticsQueryMeta] = None
 
 
+class AgentChatResult(BaseModel):
+    """Chat-facing payload after ExecuteResult (blocks config or Markdown table)."""
+
+    mode: Literal["blocks", "table"]
+    blocks: Optional[AnalyticsQueryResponse] = None
+    table_markdown: Optional[str] = None
+    sql: Optional[str] = None
+    path: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    caveats: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # LibreChat analytics contract — Part 2a (insight config → data)
 # ---------------------------------------------------------------------------

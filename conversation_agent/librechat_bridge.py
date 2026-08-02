@@ -27,6 +27,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from conversation_agent import config
+from conversation_agent.chat_format import chat_result_to_text
+from conversation_agent.models import AgentChatResult
 from conversation_agent.shared import build_mcp_tools
 from conversation_agent.visualization_agent import (
     LEGACY_AGENT_ID,
@@ -64,6 +66,13 @@ def _content_to_text(content: Any) -> str:
         return ""
     if isinstance(content, str):
         return content
+    if isinstance(content, AgentChatResult):
+        return chat_result_to_text(content)
+    if isinstance(content, dict) and content.get("mode") in ("blocks", "table"):
+        try:
+            return chat_result_to_text(AgentChatResult.model_validate(content))
+        except Exception:  # noqa: BLE001
+            pass
     if hasattr(content, "model_dump"):
         return json.dumps(content.model_dump(mode="json"), indent=2, default=str)
     if isinstance(content, dict):
