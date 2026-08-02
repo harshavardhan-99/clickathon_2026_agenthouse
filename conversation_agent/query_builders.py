@@ -31,6 +31,8 @@ ALLOWED_SEGMENTS = frozenset(
 
 # SAS event discriminator column (not the AnalyticsPlan.event_names list field)
 EVENT_COL = "event_name"
+# Live activity_events.timestamp is DateTime64(3); windowFunnel needs DateTime/UInt
+FUNNEL_TS = "toDateTime(timestamp)"
 
 CORE_FUNNEL_STEPS = [
     "destination_card_clicked",
@@ -175,13 +177,13 @@ def build_funnel_sql(plan: AnalyticsPlan) -> BuildResult:
         f"AS conversion_from_start"
     )
 
-    sql = f"""-- window: {window} seconds (timestamp is DateTime)
+    sql = f"""-- window: {window} seconds (cast DateTime64 → DateTime for windowFunnel)
 WITH funnel_levels AS (
     SELECT
         user_id,
         {inner_seg}
         windowFunnel({window})(
-            timestamp,
+            {FUNNEL_TS},
             {conditions}
         ) AS level
     FROM {table}
@@ -199,8 +201,9 @@ FROM funnel_levels
         sql=sql,
         tables_used=[table.split(".")[-1]],
         caveats=(
-            f"windowFunnel on {table.split('.')[-1]} ({EVENT_COL}); "
-            "payload fields live in event_info (JSONExtract when needed)"
+            f"windowFunnel({FUNNEL_TS}) on {table.split('.')[-1]} ({EVENT_COL}); "
+            "timestamp is DateTime64(3) — cast required; "
+            "payload fields live in event_info/payload (JSONExtract when needed)"
         ),
         step_names=steps,
         window_seconds=window,
