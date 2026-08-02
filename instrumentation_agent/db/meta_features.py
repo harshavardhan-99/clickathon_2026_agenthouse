@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from uuid import UUID
 
-from sqlalchemy import Engine, Connection, text
+from sqlalchemy import Connection, Engine, text
 
 from instrumentation_agent.db.connection import get_engine
 from instrumentation_agent.models.domain import EventProfile
@@ -23,9 +22,7 @@ class MetaFeaturesCRUD:
         self,
         *,
         feature_id: str,
-        run_id: UUID,
         spec_path: str,
-        events_path: str,
         events: list[EventProfile],
         conn: Connection | None = None,
     ) -> None:
@@ -34,61 +31,44 @@ class MetaFeaturesCRUD:
                 "event_name": e.event_name,
                 "journey_order": e.journey_order,
                 "ch_table": e.ch_table,
-                "row_count": e.row_count,
             }
             for e in events
         ]
-        params = {
-            "feature_id": feature_id,
-            "journey": json.dumps(journey),
-            "status": "ok",
-            "spec_path": spec_path,
-            "events_path": events_path,
-            "run_id": run_id,
-            "event_count": sum(e.row_count for e in events),
-            "error": None,
-        }
-        self._upsert(params, conn=conn)
+        self._upsert(
+            {
+                "feature_id": feature_id,
+                "journey": json.dumps(journey),
+                "spec_path": spec_path,
+            },
+            conn=conn,
+        )
 
     def upsert_failed(
         self,
         *,
         feature_id: str,
-        run_id: UUID,
         spec_path: str,
-        events_path: str,
-        error: str,
         conn: Connection | None = None,
     ) -> None:
-        params = {
-            "feature_id": feature_id,
-            "journey": "[]",
-            "status": "failed",
-            "spec_path": spec_path,
-            "events_path": events_path,
-            "run_id": run_id,
-            "event_count": 0,
-            "error": error,
-        }
-        self._upsert(params, conn=conn)
+        self._upsert(
+            {
+                "feature_id": feature_id,
+                "journey": "[]",
+                "spec_path": spec_path,
+            },
+            conn=conn,
+        )
 
     def _upsert(self, params: dict[str, Any], *, conn: Connection | None) -> None:
         sql = text(
             """
             INSERT INTO meta_features
-              (feature_id, journey, status, spec_path, events_path,
-               run_id, event_count, error, updated_at)
+              (feature_id, journey, spec_path, updated_at)
             VALUES
-              (:feature_id, CAST(:journey AS jsonb), :status, :spec_path, :events_path,
-               :run_id, :event_count, :error, now())
+              (:feature_id, CAST(:journey AS jsonb), :spec_path, now())
             ON CONFLICT (feature_id) DO UPDATE SET
               journey = EXCLUDED.journey,
-              status = EXCLUDED.status,
               spec_path = EXCLUDED.spec_path,
-              events_path = EXCLUDED.events_path,
-              run_id = EXCLUDED.run_id,
-              event_count = EXCLUDED.event_count,
-              error = EXCLUDED.error,
               updated_at = now()
             """
         )
@@ -98,17 +78,61 @@ class MetaFeaturesCRUD:
         with self._engine.begin() as opened:
             opened.execute(sql, params)
 
-    def get_by_feature_id(self, feature_id: str) -> dict[str, Any] | None:
-        with self._engine.connect() as conn:
-            row = conn.execute(
+    def get_by_feature_id(
+        self,
+        feature_id: str,
+        *,
+        conn: Connection | None = None,
+    ) -> dict[str, Any] | None:
+        sql = text(
+            """
+            SELECT feature_id, journey, spec_path, updated_at
+            FROM meta_features
+            WHERE feature_id = :feature_id
+            """
+        )
+        params = {"feature_id": feature_id}
+
+        def _read(c: Connection) -> dict[str, Any] | None:
+            row = c.execute(sql, params).first()
+            return row_to_dict(row) if row else None
+
+        if conn is not None:
+            return _read(conn)
+        with self._engine.connect() as opened:
+            return _read(opened)
+
+    def insert_if_missing(
+        self,
+        *,
+        feature_id: str,
+        spec_path: str,
+        journey: list[dict[str, Any]],
+        conn: Connection | None = None,
+    ) -> bool:
+        """Insert ``meta_features`` row when absent. Returns True if inserted."""
+
+        def _write(c: Connection) -> bool:
+            if self.get_by_feature_id(feature_id, conn=c) is not None:
+                return False
+            c.execute(
                 text(
                     """
-                    SELECT feature_id, journey, status, spec_path, events_path,
-                           run_id, event_count, error, updated_at
-                    FROM meta_features
-                    WHERE feature_id = :feature_id
+                    INSERT INTO meta_features
+                      (feature_id, journey, spec_path, updated_at)
+                    VALUES
+                      (:feature_id, CAST(:journey AS jsonb), :spec_path, now())
                     """
                 ),
-                {"feature_id": feature_id},
-            ).first()
-        return row_to_dict(row) if row else None
+                {
+                    "feature_id": feature_id,
+                    "journey": json.dumps(journey),
+                    "spec_path": spec_path,
+                },
+            )
+            return True
+
+        if conn is not None:
+            return _write(conn)
+        with self._engine.begin() as opened:
+            return _write(opened)
