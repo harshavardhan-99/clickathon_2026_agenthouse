@@ -17,7 +17,7 @@ One row per event (SAS).
 | Column | Role |
 |--------|------|
 | `id` | Event id |
-| `timestamp` | Event time (`windowFunnel`, filters) |
+| `timestamp` | DateTime64(3) — filters OK; `toDateTime(timestamp)` for `windowFunnel` |
 | `event_name` | Event discriminator |
 | `user_id` | Journey partition |
 | `application_id` | Application grain |
@@ -41,6 +41,7 @@ Supporting / feature events (Express, Group, …) share the same table; payload 
 
 - Aggregate in ClickHouse — never dump raw rows
 - Filter on `event_name`; segment on envelope columns
-- Payload metrics: `JSONExtract*(event_info, '…')`
+- Payload metrics: `JSONExtract*(event_info, '…')` (live column may be `payload`)
+- `windowFunnel(...)(toDateTime(timestamp), ...)` — bare DateTime64 is illegal
 - Prefer max(timestamp)-relative time windows for contest data
 - Fully qualify: `atlys.activity_events`
